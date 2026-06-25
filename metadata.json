@@ -1,0 +1,6 @@
+{
+  "name": "ClinicFlow AI",
+  "description": "Gestão inteligente para clínicas que querem controlar agenda, pacientes, financeiro e retornos em um só lugar.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

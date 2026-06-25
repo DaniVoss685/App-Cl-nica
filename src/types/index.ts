@@ -1,0 +1,216 @@
+export type ClinicType = 'odontologia' | 'dermatologia' | 'endocrinologia' | 'estética' | 'fisioterapia' | 'psicologia' | 'nutrição' | 'outro';
+
+export interface Patient {
+  id: string;
+  name: string;
+  cpf?: string;
+  phone: string;
+  email?: string;
+  dateOfBirth?: string;
+  sex?: 'm' | 'f' | 'outro';
+  reasonForVisit?: string;
+  referralMethod?: string;
+  referredBy?: string;
+  status: 'novo' | 'em tratamento' | 'em acompanhamento' | 'inativo' | 'finalizado' | 'em atraso';
+  lastVisit?: string;
+  createdAt: string;
+  observations?: string;
+  profilePicture?: string;
+}
+
+export interface Professional {
+  id: string;
+  name: string;
+  specialty: string;
+  email?: string;
+  phone?: string;
+  active: boolean;
+  color?: string;
+  workingHours?: {
+    start: string; // HH:mm
+    end: string;   // HH:mm
+  };
+}
+
+export interface Service {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  durationMinutes: number;
+  generatesFollowUp: boolean;
+  followUpDays?: number;
+  itemCosts?: { itemId: string; quantity: number }[];
+  professionalIds?: string[];
+  requiresUpfrontPayment?: boolean;
+  upfrontPaymentType?: 'porcentagem' | 'valor';
+  upfrontPaymentValue?: number;
+}
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  unit: 'unidade' | 'pacote' | 'peso' | 'ml' | 'g';
+  unitCost: number;
+  category: string;
+  linkedServiceId?: string;
+  quantity?: number;
+  minQuantity?: number;
+  unitsPerPackage?: number;
+  subUnitName?: string;
+}
+
+export interface Package {
+  id: string;
+  name: string;
+  description?: string;
+  price: number;
+  totalSessions: number;
+  sessionInterval?: number;
+  includedServices: string[];
+  active?: boolean;
+  maxDiscountPercentage?: number;
+  maxInstallments?: number;
+  professionalIds?: string[];
+  requiresUpfrontPayment?: boolean;
+  upfrontPaymentType?: 'porcentagem' | 'valor';
+  upfrontPaymentValue?: number;
+}
+
+export interface Appointment {
+  id: string;
+  patientId: string;
+  professionalId: string;
+  serviceId?: string;
+  packageId?: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  status: 'agendado' | 'confirmado' | 'realizado' | 'finalizado' | 'faltou' | 'cancelado' | 'chegou' | 'atrasado';
+  confirmationStatus: 'pendente' | 'mensagem enviada' | 'confirmado' | 'cancelado';
+  type: 'avaliação' | 'consulta' | 'retorno' | 'sessão' | 'acompanhamento';
+  value: number;
+  paymentStatus: 'pendente' | 'pago' | 'parcial';
+  paymentMethod?: 'pix' | 'cartão de crédito' | 'dinheiro' | 'boleto' | 'transferência';
+  notes?: string;
+  isCaseStudy?: boolean;
+  linkedToAppointmentId?: string;
+  customItemCostsUsed?: { itemId: string; quantity: number }[];
+  upfrontPaid?: boolean;
+  upfrontPaidAmount?: number;
+}
+
+export interface FinancialTransaction {
+  id: string;
+  patientId?: string;
+  appointmentId?: string;
+  packageId?: string;
+  type: 'receita' | 'despesa';
+  amount: number;
+  dueDate: string;
+  paymentDate?: string;
+  status: 'aberto' | 'pago' | 'pendente' | 'atrasado' | 'cancelado';
+  paymentMethod?: 'pix' | 'cartão de crédito' | 'dinheiro' | 'boleto' | 'transferência';
+  category?: string;
+  description?: string;
+}
+
+export interface MedicalRecord {
+  id: string;
+  patientId: string;
+  professionalId: string;
+  appointmentId?: string;
+  date: string;
+  content: string;
+  type: 'evolução' | 'avaliação' | 'prescrição' | 'exame';
+}
+
+export interface Document {
+  id: string;
+  patientId: string;
+  name: string;
+  type: 'termo de consentimento' | 'contrato' | 'receituário' | 'atestado' | 'outro';
+  date: string;
+  url?: string;
+  status: 'assinado' | 'pendente' | 'gerado';
+}
+
+export interface AIInsightTask {
+  id: string;
+  description: string;
+  isCompleted: boolean;
+  type: 'AI' | 'User';
+}
+
+export interface AIInsight {
+  id: string;
+  type: 'alerta' | 'oportunidade' | 'risco' | 'retenção' | 'operacional' | 'estratégico' | 'comercial';
+  message: string;
+  patientId?: string;
+  actionRequested: string;
+  resolved: boolean;
+  createdAt: string;
+  tasks?: AIInsightTask[];
+}
+
+export interface Budget {
+  id: string;
+  patientId: string;
+  date: string;
+  items: string;
+  total: number;
+  status: 'pendente' | 'enviado' | 'aprovado' | 'recusado';
+}
+
+export type UserRole = 'admin' | 'recepção' | 'profissional';
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  active: boolean;
+}
+
+export interface CRMOpportunity {
+  id: string;
+  name: string;
+  value: number;
+  stage: 'lead' | 'agendado' | 'aguardando' | 'convertido';
+  leadSource: string;
+  date: string;
+  phone?: string;
+  notes?: string;
+}
+
+export interface Reminder {
+  id: string;
+  patientId: string;
+  title: string;
+  message: string;
+  date: string;
+  type: 'acompanhamento' | 'retorno' | 'geral';
+  status: 'pendente' | 'enviado' | 'concluido';
+  createdAt: string;
+}
+
+export interface FileItem {
+  id: string;
+  name: string;
+  type: 'pdf' | 'doc' | 'image' | 'sheet';
+  size: string;
+  date: string;
+  folder: string;
+}
+
+export interface SupplyExpense {
+  id: string;
+  itemId: string;
+  itemName: string;
+  quantityUsed: number;
+  serviceName: string;
+  patientName: string;
+  totalCost: number;
+  date: string;
+}
+
