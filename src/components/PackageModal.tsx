@@ -33,12 +33,12 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
           name: pkg.name || '',
           description: pkg.description || '',
           price: pkg.price || 0,
-          totalSessions: pkg.totalSessions || 1,
-          sessionInterval: pkg.sessionInterval || 7,
+          totalSessions: pkg.totalSessions,
+          sessionInterval: pkg.sessionInterval,
           includedServices: pkg.includedServices || [],
           active: pkg.active !== undefined ? pkg.active : true,
-          maxDiscountPercentage: pkg.maxDiscountPercentage !== undefined ? pkg.maxDiscountPercentage : 10,
-          maxInstallments: pkg.maxInstallments !== undefined ? pkg.maxInstallments : 6,
+          maxDiscountPercentage: pkg.maxDiscountPercentage !== undefined ? pkg.maxDiscountPercentage : '' as unknown as number,
+          maxInstallments: pkg.maxInstallments !== undefined ? pkg.maxInstallments : '' as unknown as number,
           professionalIds: pkg.professionalIds || [],
           requiresUpfrontPayment: pkg.requiresUpfrontPayment ?? false,
           upfrontPaymentType: (pkg.upfrontPaymentType ?? 'porcentagem') as 'porcentagem' | 'valor',
@@ -50,12 +50,12 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
       name: '',
       description: '',
       price: 0,
-      totalSessions: 10,
-      sessionInterval: 7,
+      totalSessions: '' as unknown as number,
+      sessionInterval: '' as unknown as number,
       includedServices: [] as string[],
       active: true,
-      maxDiscountPercentage: 10,
-      maxInstallments: 6,
+      maxDiscountPercentage: '' as unknown as number,
+      maxInstallments: '' as unknown as number,
       professionalIds: [] as string[],
       requiresUpfrontPayment: false,
       upfrontPaymentType: 'porcentagem' as 'porcentagem' | 'valor',
@@ -124,12 +124,16 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
     const nameWithCapital = formData.name.trim().charAt(0).toUpperCase() + formData.name.trim().slice(1);
     
     // Clamp discount percentage to maximum of 10%
-    const clampedDiscount = Math.min(10, Math.max(0, formData.maxDiscountPercentage || 0));
+    const discountVal = isNaN(formData.maxDiscountPercentage) || formData.maxDiscountPercentage === ('' as unknown as number) ? 0 : formData.maxDiscountPercentage;
+    const clampedDiscount = Math.min(10, Math.max(0, discountVal));
 
     const finalData = {
       ...formData,
       name: nameWithCapital,
-      maxDiscountPercentage: clampedDiscount
+      maxDiscountPercentage: clampedDiscount,
+      totalSessions: isNaN(formData.totalSessions) || formData.totalSessions === ('' as unknown as number) ? 1 : formData.totalSessions,
+      sessionInterval: isNaN(formData.sessionInterval) || formData.sessionInterval === ('' as unknown as number) ? 0 : formData.sessionInterval,
+      maxInstallments: isNaN(formData.maxInstallments) || formData.maxInstallments === ('' as unknown as number) ? 1 : formData.maxInstallments
     };
 
     if (packageId) {
@@ -139,6 +143,7 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
       addPackage(finalData);
       setSuccessMode('create');
     }
+    setFormData(finalData);
     setSavedName(nameWithCapital);
     setShowSuccess(true);
   };
@@ -251,7 +256,7 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
                       }
                       setFormData({...formData, name: val});
                     }}
-                    placeholder="Ex: Protocolo Rejuvenescimento Facial Completo"
+                    placeholder=""
                     className="pl-11 h-12 border-slate-200 bg-slate-50/50 font-bold text-base text-slate-800 rounded-xl"
                     required
                   />
@@ -262,7 +267,7 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
                 <Textarea 
                   value={formData.description}
                   onChange={(e) => setFormData({...formData, description: e.target.value})}
-                  placeholder="Descreva o que está incluído no pacote, quantidade de consultas, benefícios, etc..."
+                  placeholder=""
                   className="min-h-[100px] border-slate-200 bg-slate-50/50 resize-none font-medium text-slate-700 rounded-xl p-4 text-sm"
                 />
               </div>
@@ -276,7 +281,7 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
                   <Input 
                     value={displayPrice}
                     onChange={handlePriceChange}
-                    placeholder="Digite o preço ou valor do pacote"
+                    placeholder=""
                     className="pl-11 h-12 border-slate-200 bg-slate-50/50 font-mono font-bold text-base text-slate-800 rounded-xl"
                     required
                   />
@@ -288,8 +293,8 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
                   <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-505" />
                   <Input 
                     type="number"
-                    value={formData.totalSessions}
-                    onChange={(e) => setFormData({...formData, totalSessions: parseInt(e.target.value || '1')})}
+                    value={formData.totalSessions === 0 || isNaN(formData.totalSessions) ? '' : formData.totalSessions}
+                    onChange={(e) => setFormData({...formData, totalSessions: e.target.value ? parseInt(e.target.value) : '' as unknown as number})}
                     className="pl-11 h-12 border-slate-200 bg-slate-50/50 font-bold rounded-xl"
                     required
                   />
@@ -301,8 +306,8 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
                   <Clock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <Input 
                     type="number"
-                    value={formData.sessionInterval}
-                    onChange={(e) => setFormData({...formData, sessionInterval: parseInt(e.target.value || '7')})}
+                    value={formData.sessionInterval === 0 || isNaN(formData.sessionInterval) ? '' : formData.sessionInterval}
+                    onChange={(e) => setFormData({...formData, sessionInterval: e.target.value ? parseInt(e.target.value) : '' as unknown as number})}
                     className="pl-11 h-12 border-slate-200 bg-slate-50/50 font-bold rounded-xl"
                   />
                 </div>
@@ -320,9 +325,13 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
                     type="number"
                     min="0"
                     max="10"
-                    placeholder="Ex: 10"
-                    value={formData.maxDiscountPercentage}
+                    placeholder=""
+                    value={formData.maxDiscountPercentage === 0 || isNaN(formData.maxDiscountPercentage) ? '' : formData.maxDiscountPercentage}
                     onChange={(e) => {
+                      if (e.target.value === '') {
+                        setFormData({...formData, maxDiscountPercentage: '' as unknown as number});
+                        return;
+                      }
                       let val = parseInt(e.target.value);
                       if (isNaN(val)) val = 0;
                       if (val > 10) val = 10;
@@ -336,9 +345,11 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
                 <Label className="text-xs font-black text-slate-400 italic uppercase">Máximo de parcelas permitidas no cartão</Label>
                 <select 
                   className="w-full h-12 px-4 border border-slate-205 bg-slate-50/50 rounded-xl font-bold text-sm text-slate-800 shadow-xs cursor-pointer"
-                  value={formData.maxInstallments}
-                  onChange={(e) => setFormData({...formData, maxInstallments: parseInt(e.target.value)})}
+                  value={formData.maxInstallments === undefined || isNaN(formData.maxInstallments) ? '' : formData.maxInstallments}
+                  onChange={(e) => setFormData({...formData, maxInstallments: e.target.value ? parseInt(e.target.value) : '' as unknown as number})}
+                  required
                 >
+                  <option value="" disabled selected={formData.maxInstallments === undefined || isNaN(formData.maxInstallments)}>Selecione...</option>
                   {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(num => (
                     <option key={num} value={num}>{num}x sem juros no cartão de crédito</option>
                   ))}
@@ -347,29 +358,37 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
             </div>
 
             {/* Live Pricing Math Simulator */}
-            {formData.price > 0 && (
-              <div className="p-6 bg-indigo-50/50 border border-indigo-100 rounded-2xl space-y-3.5 text-xs shadow-xs transition-all animate-fadeIn">
-                <h4 className="font-black text-indigo-900 italic uppercase text-[10px] tracking-wider mb-2">Simulação Comercial de Venda</h4>
-                <div className="flex justify-between font-bold text-slate-700">
-                  <span>Preço do Plano à Vista:</span>
-                  <span className="font-mono text-sm">R$ {formData.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+            {formData.price > 0 && (() => {
+              const discountPct = isNaN(formData.maxDiscountPercentage) || formData.maxDiscountPercentage === ('' as unknown as number) ? 0 : formData.maxDiscountPercentage;
+              const installments = isNaN(formData.maxInstallments) || formData.maxInstallments === ('' as unknown as number) || formData.maxInstallments === 0 ? 1 : formData.maxInstallments;
+              const discountAmount = (formData.price * discountPct) / 100;
+              const minPrice = formData.price - discountAmount;
+              const installmentValue = minPrice / installments;
+              
+              return (
+                <div className="p-6 bg-indigo-50/50 border border-indigo-100 rounded-2xl space-y-3.5 text-xs shadow-xs transition-all animate-fadeIn">
+                  <h4 className="font-black text-indigo-900 italic uppercase text-[10px] tracking-wider mb-2">Simulação Comercial de Venda</h4>
+                  <div className="flex justify-between font-bold text-slate-700">
+                    <span>Preço do Plano à Vista:</span>
+                    <span className="font-mono text-sm">R$ {formData.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-amber-600 bg-amber-50/40 p-2 rounded-lg border border-amber-100/40">
+                    <span>Desconto Limite Configurado ({discountPct}%):</span>
+                    <span className="font-mono">- R$ {discountAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between font-black text-indigo-950 border-t border-indigo-100 pt-3 text-sm italic">
+                    <span>Preço Mínimo Especial Permitido:</span>
+                    <span className="font-mono text-base">R$ {minPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] font-semibold text-slate-600 border-t border-dashed border-indigo-100/70 pt-3 mt-1">
+                    <span>Simulação de Parcelas Sem Juros:</span>
+                    <span className="font-mono bg-white border border-slate-100 rounded px-2.5 py-1 text-slate-700 font-extrabold text-[11px]">
+                      Até {installments}x de R$ {installmentValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex justify-between font-bold text-amber-600 bg-amber-50/40 p-2 rounded-lg border border-amber-100/40">
-                  <span>Desconto Limite Configurado ({formData.maxDiscountPercentage || 10}%):</span>
-                  <span className="font-mono">- R$ {((formData.price * (formData.maxDiscountPercentage || 10)) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                </div>
-                <div className="flex justify-between font-black text-indigo-950 border-t border-indigo-100 pt-3 text-sm italic">
-                  <span>Preço Mínimo Especial Permitido:</span>
-                  <span className="font-mono text-base">R$ {(formData.price - (formData.price * (formData.maxDiscountPercentage || 10)) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                </div>
-                <div className="flex justify-between text-[11px] font-semibold text-slate-600 border-t border-dashed border-indigo-100/70 pt-3 mt-1">
-                  <span>Simulação de Parcelas Sem Juros:</span>
-                  <span className="font-mono bg-white border border-slate-100 rounded px-2.5 py-1 text-slate-700 font-extrabold text-[11px]">
-                    Até {formData.maxInstallments}x de R$ {((formData.price - (formData.price * (formData.maxDiscountPercentage || 10)) / 100) / formData.maxInstallments).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* PAGAMENTO ANTECIPADO BLOCK */}
             <div className="bg-slate-50 rounded-[2rem] border border-slate-100 p-6 space-y-4">
@@ -448,7 +467,7 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
                       )}
                       <Input
                         type="number"
-                        placeholder={formData.upfrontPaymentType === 'porcentagem' ? "Ex: 30" : "Ex: 300"}
+                        placeholder=""
                         className="h-11 bg-white border-slate-200 rounded-xl pl-10 font-bold text-sm text-slate-800"
                         value={formData.upfrontPaymentValue || ''}
                         onChange={e => setFormData({ ...formData, upfrontPaymentValue: parseFloat(e.target.value) || 0 })}
@@ -493,7 +512,7 @@ export function PackageModal({ open, onOpenChange, packageId }: PackageModalProp
                 </Label>
                 <p className="text-slate-450 text-[11px] text-slate-400">Limite este pacote para profissionais específicos. Deixe desmarcado para ficar habilitado para toda a equipe.</p>
                 <div className="space-y-2 bg-slate-50 p-5 rounded-2xl border border-slate-100 max-h-[190px] overflow-y-auto">
-                  {professionals.map(p => {
+                  {professionals.filter(p => p.tipoMembro !== 'gestao').map(p => {
                     const isChecked = (formData.professionalIds || []).includes(p.id);
                     return (
                       <label key={p.id} className="flex items-center gap-3 cursor-pointer group p-2 hover:bg-white rounded-xl border border-transparent hover:border-slate-100 transition-all select-none bg-white/40">

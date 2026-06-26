@@ -30,6 +30,9 @@ export function Prontuarios() {
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [appointments]);
 
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const evolutionsToday = appointments.filter(a => a.status === 'realizado' && a.date === todayStr).length;
+
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -133,11 +136,11 @@ export function Prontuarios() {
             <div className="space-y-4">
               <div className="bg-slate-50 p-4 rounded-2xl">
                 <p className="text-[10px] font-black text-slate-400 mb-1 lowercase">evoluções hoje</p>
-                <p className="text-2xl font-black text-slate-900 italic">14</p>
+                <p className="text-2xl font-black text-slate-900 italic">{evolutionsToday}</p>
               </div>
               <div className="bg-slate-50 p-4 rounded-2xl">
                 <p className="text-[10px] font-black text-slate-400 mb-1 lowercase">pendentes assinatura</p>
-                <p className="text-2xl font-black text-amber-500 italic">03</p>
+                <p className="text-2xl font-black text-amber-500 italic">0</p>
               </div>
             </div>
           </Card>

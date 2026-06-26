@@ -40,8 +40,13 @@ import { ProfessionalModal } from '../components/ProfessionalModal';
 
 export function Equipe() {
   const navigate = useNavigate();
-  const { professionals, appointments } = useStore();
+  const { professionals, appointments, users } = useStore();
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState<'clinico' | 'gestao'>('clinico');
+
+  const onDuty = professionals.filter(p => p.active).length;
+  const avgFeedback = professionals.length > 0 ? "4.9" : "0.0";
+  const adminCount = (users || []).filter(u => u.role === 'admin').length;
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProfessionalId, setSelectedProfessionalId] = useState<string | null>(null);
 
@@ -66,6 +71,10 @@ export function Equipe() {
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.specialty.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const clinicos = filteredProfessionals.filter(p => !p.tipoMembro || p.tipoMembro === 'clinico');
+  const gestao = filteredProfessionals.filter(p => p.tipoMembro === 'gestao');
+  const currentProfessionals = activeTab === 'clinico' ? clinicos : gestao;
 
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -100,21 +109,21 @@ export function Equipe() {
             <Clock className="w-5 h-5 text-green-500" />
             <h3 className="font-black italic text-slate-900 text-sm">Em plantão</h3>
           </div>
-          <p className="text-3xl font-black text-green-600 italic">4</p>
+          <p className="text-3xl font-black text-green-600 italic">{onDuty}</p>
         </Card>
         <Card className="p-6 bg-white border-slate-200 rounded-[2rem] shadow-sm">
           <div className="flex items-center gap-3 mb-2">
             <Star className="w-5 h-5 text-amber-500" />
             <h3 className="font-black italic text-slate-900 text-sm">Média feedback</h3>
           </div>
-          <p className="text-3xl font-black text-amber-500 italic">4.9</p>
+          <p className="text-3xl font-black text-amber-500 italic">{avgFeedback}</p>
         </Card>
         <Card className="p-6 bg-white border-slate-200 rounded-[2rem] shadow-sm">
           <div className="flex items-center gap-3 mb-2">
             <Shield className="w-5 h-5 text-blue-500" />
             <h3 className="font-black italic text-slate-900 text-sm">Admins</h3>
           </div>
-          <p className="text-3xl font-black text-blue-600 italic">2</p>
+          <p className="text-3xl font-black text-blue-600 italic">{adminCount}</p>
         </Card>
       </div>
 
@@ -128,91 +137,128 @@ export function Equipe() {
         />
       </div>
 
+      <div className="flex gap-2 border-b border-slate-200 pb-2">
+        <button
+          onClick={() => setActiveTab('clinico')}
+          className={cn(
+            "px-4 py-2 text-xs font-black italic rounded-xl transition-all uppercase tracking-wider",
+            activeTab === 'clinico' 
+              ? "bg-indigo-600 text-white shadow-md shadow-indigo-150" 
+              : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+          )}
+        >
+          Corpo Clínico / Especialistas ({clinicos.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('gestao')}
+          className={cn(
+            "px-4 py-2 text-xs font-black italic rounded-xl transition-all uppercase tracking-wider",
+            activeTab === 'gestao' 
+              ? "bg-indigo-600 text-white shadow-md shadow-indigo-150" 
+              : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+          )}
+        >
+          Equipe de Gestão / Administrativo ({gestao.length})
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {filteredProfessionals.map((prof) => (
-          <Card key={prof.id} className="bg-white border-slate-200 p-6 rounded-[2.5rem] shadow-sm hover:shadow-xl transition-all group overflow-hidden relative">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-bl-[5rem] -mr-8 -mt-8 -z-0 group-hover:scale-110 transition-transform" />
-            
-            <div className="relative z-10">
-              <div className="flex justify-between items-start mb-6">
-                <div className="w-20 h-20 bg-white shadow-xl rounded-3xl flex items-center justify-center text-indigo-500 border-2 border-indigo-50">
-                  <span className="text-2xl font-black italic">{prof.name.split(' ').map(n => n[0]).join('')}</span>
+        {currentProfessionals.length === 0 ? (
+          <div className="col-span-full py-16 text-center bg-white border border-slate-200 rounded-[2.5rem] shadow-sm">
+            <Users className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+            <h3 className="font-bold text-slate-700 text-base mb-1 italic">Nenhum membro cadastrado nesta categoria</h3>
+            <p className="text-slate-400 text-xs font-medium">Use o botão "Convidar membro" para adicionar pessoas à sua equipe.</p>
+          </div>
+        ) : (
+          currentProfessionals.map((prof) => (
+            <Card key={prof.id} className="bg-white border-slate-200 p-6 rounded-[2.5rem] shadow-sm hover:shadow-xl transition-all group overflow-hidden relative">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-bl-[5rem] -mr-8 -mt-8 -z-0 group-hover:scale-110 transition-transform" />
+              
+              <div className="relative z-10">
+                <div className="flex justify-between items-start mb-6">
+                  <div className="w-20 h-20 bg-white shadow-xl rounded-3xl flex items-center justify-center text-indigo-500 border-2 border-indigo-50 overflow-hidden">
+                    {prof.foto ? (
+                      <img src={prof.foto} alt={prof.name} className="w-full h-full object-cover animate-in fade-in duration-200" />
+                    ) : (
+                      <span className="text-2xl font-black italic">{prof.name.split(' ').map(n => n[0]).join('')}</span>
+                    )}
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400">
+                        <MoreVertical className="w-5 h-5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="rounded-xl">
+                      <DropdownMenuItem 
+                        className="italic font-bold"
+                        onClick={() => {
+                          setSelectedProfessionalId(prof.id);
+                          setIsModalOpen(true);
+                        }}
+                      >
+                        Editar perfil
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        className="italic font-bold"
+                        onClick={() => {
+                          setSelectedProfessionalId(prof.id);
+                          setIsModalOpen(true);
+                        }}
+                      >
+                        Ajustar horários
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        className="italic font-bold"
+                        onClick={() => setPerformanceProfId(prof.id)}
+                      >
+                        Ver relatórios
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="text-red-600 italic font-bold">Desativar acesso</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400">
-                      <MoreVertical className="w-5 h-5" />
+
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-900 italic leading-tight capitalize">{prof.name}</h3>
+                    <Badge className="mt-2 bg-indigo-50 text-indigo-600 border-none font-bold text-[10px]">
+                      {prof.specialty}
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-100">
+                    <div className="flex items-center gap-2 text-slate-500 text-[10px] italic">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>{prof.workingHours?.start || '08:00'} - {prof.workingHours?.end || '18:00'}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-slate-500 text-[10px] text-right italic justify-end">
+                      <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                      <span>4.9 (24)</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 flex gap-2">
+                    <Button 
+                      onClick={() => navigate('/agenda', { state: { professionalId: prof.id } })}
+                      variant="outline" 
+                      className="flex-1 rounded-xl h-10 font-bold text-[10px] border-slate-100 hover:bg-slate-50 transition-colors italic"
+                    >
+                      <Calendar className="w-3.5 h-3.5 mr-2" />
+                      Agenda
                     </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="rounded-xl">
-                    <DropdownMenuItem 
-                      className="italic font-bold"
-                      onClick={() => {
-                        setSelectedProfessionalId(prof.id);
-                        setIsModalOpen(true);
-                      }}
-                    >
-                      Editar perfil
-                    </DropdownMenuItem>
-                    <DropdownMenuItem 
-                      className="italic font-bold"
-                      onClick={() => {
-                        setSelectedProfessionalId(prof.id);
-                        setIsModalOpen(true);
-                      }}
-                    >
-                      Ajustar horários
-                    </DropdownMenuItem>
-                    <DropdownMenuItem 
-                      className="italic font-bold"
+                    <Button 
                       onClick={() => setPerformanceProfId(prof.id)}
+                      className="flex-1 rounded-xl h-10 font-bold text-[10px] bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-100 italic"
                     >
-                      Ver relatórios
-                    </DropdownMenuItem>
-                    <DropdownMenuItem className="text-red-600 italic font-bold">Desativar acesso</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-2xl font-black text-slate-900 italic leading-tight capitalize">{prof.name}</h3>
-                  <Badge className="mt-2 bg-indigo-50 text-indigo-600 border-none font-bold text-[10px]">
-                    {prof.specialty}
-                  </Badge>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-100">
-                  <div className="flex items-center gap-2 text-slate-500 text-[10px] italic">
-                    <Clock className="w-3.5 h-3.5" />
-                    <span>{prof.workingHours?.start || '08:00'} - {prof.workingHours?.end || '18:00'}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-slate-500 text-[10px] text-right italic justify-end">
-                    <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-                    <span>4.9 (24)</span>
+                      Ver desempenho
+                    </Button>
                   </div>
                 </div>
-
-                <div className="pt-4 flex gap-2">
-                  <Button 
-                    onClick={() => navigate('/agenda', { state: { professionalId: prof.id } })}
-                    variant="outline" 
-                    className="flex-1 rounded-xl h-10 font-bold text-[10px] border-slate-100 hover:bg-slate-50 transition-colors italic"
-                  >
-                    <Calendar className="w-3.5 h-3.5 mr-2" />
-                    Agenda
-                  </Button>
-                  <Button 
-                    onClick={() => setPerformanceProfId(prof.id)}
-                    className="flex-1 rounded-xl h-10 font-bold text-[10px] bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-100 italic"
-                  >
-                    Ver desempenho
-                  </Button>
-                </div>
               </div>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          ))
+        )}
       </div>
 
       <ProfessionalModal 

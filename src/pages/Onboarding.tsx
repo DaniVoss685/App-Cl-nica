@@ -20,18 +20,18 @@ import { cn } from '../lib/utils';
 
 const steps = [
   {
-    title: "Boas-vindas ao ClinicFlow AI",
-    subtitle: "Sua clínica operando com inteligência de nível Stark.",
+    title: "Bem-vindas ao aplicativo das suas finanças",
+    subtitle: "Seu negócio operando com inteligência de nível Stark.",
     icon: Sparkles
   },
   {
     title: "Sua Identidade",
-    subtitle: "Como devemos chamar sua unidade de atendimento?",
+    subtitle: "Como devemos chamar sua empresa ou negócio?",
     icon: Building2
   },
   {
     title: "Especialidade",
-    subtitle: "Qual o foco principal dos seus protocolos médicos?",
+    subtitle: "Qual o foco principal do seu negócio?",
     icon: Stethoscope
   },
   {
@@ -50,12 +50,18 @@ export function Onboarding() {
     type: '',
     activateAI: true
   });
+  const [isCustomType, setIsCustomType] = useState(false);
+  const [customType, setCustomType] = useState('');
 
   const nextStep = () => {
     if (step < steps.length - 1) {
       setStep(step + 1);
     } else {
-      setOnboarded(formData);
+      const finalData = {
+        ...formData,
+        type: isCustomType ? customType : formData.type
+      };
+      setOnboarded(finalData);
       startTour(0);
     }
   };
@@ -104,7 +110,7 @@ export function Onboarding() {
                 <div className="space-y-6">
                   <div className="grid grid-cols-1 gap-4">
                     {[
-                      { icon: Zap, text: "Agenda Otimizada por IA", color: "text-amber-400" },
+                      { icon: Zap, text: "Fluxo de Caixa Otimizado por IA", color: "text-amber-400" },
                       { icon: Target, text: "Gestão Comercial Preditiva", color: "text-emerald-400" },
                       { icon: ShieldCheck, text: "Financeiro Blindado", color: "text-blue-400" }
                     ].map((item, i) => (
@@ -119,11 +125,11 @@ export function Onboarding() {
 
               {step === 1 && (
                 <div className="space-y-4">
-                  <Label className="text-slate-400 uppercase text-[10px] font-bold tracking-[0.2em]">Nome da Clínica / Unidade</Label>
+                  <Label className="text-slate-400 uppercase text-[10px] font-bold tracking-[0.2em]">Nome da Empresa / Negócio</Label>
                   <Input 
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="Ex: Stark Medical Center"
+                    placeholder="Ex: Stark Enterprises"
                     className="h-16 bg-slate-800/50 border-slate-700 text-white text-xl rounded-2xl focus:ring-indigo-500/50 focus:border-indigo-500"
                     autoFocus
                   />
@@ -131,21 +137,52 @@ export function Onboarding() {
               )}
 
               {step === 2 && (
-                <div className="grid grid-cols-2 gap-4">
-                  {['Estética', 'Odontologia', 'Medicina', 'Fisioterapia', 'Psicologia', 'Outro'].map((type) => (
-                    <button
-                      key={type}
-                      onClick={() => setFormData({ ...formData, type })}
-                      className={cn(
-                        "h-20 rounded-2xl border-2 transition-all flex items-center justify-center font-bold",
-                        formData.type === type 
-                          ? "bg-indigo-600/20 border-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.2)]" 
-                          : "bg-slate-800/30 border-slate-800 text-slate-500 hover:border-slate-700 hover:text-slate-300"
-                      )}
-                    >
-                      {type}
-                    </button>
-                  ))}
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    {['Estética', 'Odontologia', 'Medicina', 'Fisioterapia', 'Psicologia', 'Outro'].map((type) => {
+                      const isSelected = type === 'Outro' ? isCustomType : (!isCustomType && formData.type === type);
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => {
+                            if (type === 'Outro') {
+                              setIsCustomType(true);
+                              setFormData({ ...formData, type: customType });
+                            } else {
+                              setIsCustomType(false);
+                              setFormData({ ...formData, type });
+                            }
+                          }}
+                          className={cn(
+                            "h-20 rounded-2xl border-2 transition-all flex items-center justify-center font-bold",
+                            isSelected 
+                              ? "bg-indigo-600/20 border-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.2)]" 
+                              : "bg-slate-800/30 border-slate-800 text-slate-500 hover:border-slate-700 hover:text-slate-300"
+                          )}
+                        >
+                          {type}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {isCustomType && (
+                    <div className="mt-4 space-y-2 animate-in fade-in slide-in-from-top-4 duration-300">
+                      <Label className="text-slate-400 uppercase text-[10px] font-bold tracking-[0.2em]">Sua Profissão / Especialidade</Label>
+                      <Input 
+                        value={customType}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCustomType(val);
+                          setFormData(prev => ({ ...prev, type: val }));
+                        }}
+                        placeholder="Ex: Consultor Financeiro"
+                        className="h-16 bg-slate-800/50 border-slate-700 text-white text-xl rounded-2xl focus:ring-indigo-500/50 focus:border-indigo-500"
+                        autoFocus
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -185,7 +222,10 @@ export function Onboarding() {
             <div className="pt-4">
               <Button 
                 onClick={nextStep}
-                disabled={step === 1 && !formData.name}
+                disabled={
+                  (step === 1 && !formData.name) ||
+                  (step === 2 && (!formData.type || (isCustomType && !customType.trim())))
+                }
                 className="w-full h-16 bg-indigo-600 hover:bg-indigo-500 text-white text-lg font-bold rounded-2xl shadow-[0_10px_25px_-5px_rgba(79,70,229,0.4)] group"
               >
                 {step === steps.length - 1 ? 'Iniciar Protocolos' : 'Continuar'}

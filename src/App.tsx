@@ -1,8 +1,10 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import { useStore } from './store';
 import { AppLayout } from './components/layout/AppLayout';
 import { Dashboard } from './pages/Dashboard';
 import { Onboarding } from './pages/Onboarding';
+import { Login } from './pages/Login';
 import { Agenda } from './pages/Agenda';
 import { Pacientes } from './pages/Pacientes';
 import { Comercial } from './pages/Comercial';
@@ -44,7 +46,19 @@ const Placeholder = ({ name }: { name: string }) => (
 );
 
 export default function App() {
+  const currentClient = useStore(state => state.currentClient);
   const isOnboarded = useStore(state => state.isOnboarded);
+  const syncFromSupabase = useStore(state => state.syncFromSupabase);
+
+  useEffect(() => {
+    if (currentClient?.id) {
+      syncFromSupabase(currentClient.id);
+    }
+  }, [currentClient?.id, syncFromSupabase]);
+
+  if (!currentClient) {
+    return <Login />;
+  }
 
   if (!isOnboarded) {
     return <Onboarding />;

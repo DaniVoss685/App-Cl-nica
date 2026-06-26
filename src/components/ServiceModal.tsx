@@ -31,30 +31,18 @@ interface ServiceModalProps {
 }
 
 export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) {
-  const { services, addService, updateService, serviceCategories, inventory, professionals } = useStore();
-  const [formData, setFormData] = useState<{
-    name: string;
-    category: string;
-    durationMinutes: number;
-    price: number;
-    generatesFollowUp: boolean;
-    followUpDays: number;
-    itemCosts: { itemId: string; quantity: number }[];
-    professionalIds?: string[];
-    requiresUpfrontPayment: boolean;
-    upfrontPaymentType: 'porcentagem' | 'valor';
-    upfrontPaymentValue: number;
-  }>({
+  const { services, addService, updateService, serviceCategories, addServiceCategory, removeServiceCategory, inventory, professionals } = useStore();
+  const [formData, setFormData] = useState({
     name: '',
-    category: 'Estética',
-    durationMinutes: 60,
+    category: '',
+    durationMinutes: '' as unknown as number,
     price: 0,
     generatesFollowUp: false,
-    followUpDays: 15,
-    itemCosts: [],
-    professionalIds: [],
+    followUpDays: '' as unknown as number,
+    itemCosts: [] as { itemId: string; quantity: number }[],
+    professionalIds: [] as string[],
     requiresUpfrontPayment: false,
-    upfrontPaymentType: 'porcentagem',
+    upfrontPaymentType: 'porcentagem' as 'porcentagem' | 'valor',
     upfrontPaymentValue: 0
   });
 
@@ -135,11 +123,11 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
       } else {
         setFormData({
           name: '',
-          category: 'Estética',
-          durationMinutes: 60,
+          category: '',
+          durationMinutes: '' as unknown as number,
           price: 0,
           generatesFollowUp: false,
-          followUpDays: 15,
+          followUpDays: '' as unknown as number,
           itemCosts: [],
           professionalIds: [],
           requiresUpfrontPayment: false,
@@ -149,7 +137,25 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
         setDisplayPrice('');
       }
     }
-  }, [serviceId, services, isOpen]);
+  }, [isOpen, serviceId, services]);
+
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+
+  const handleAddCategory = () => {
+    const clean = newCategoryName.trim();
+    if (!clean) return;
+    addServiceCategory(clean);
+    setNewCategoryName('');
+    setFormData(prev => ({ ...prev, category: clean }));
+  };
+
+  const handleRemoveCategory = (cat: string) => {
+    removeServiceCategory(cat);
+    if (formData.category === cat) {
+      setFormData(prev => ({ ...prev, category: '' }));
+    }
+  };
 
   const handleClose = () => {
     setShowSuccess(false);
@@ -276,7 +282,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
               <Label className="text-xs font-black text-slate-400 italic uppercase">Nome do serviço / procedimento</Label>
               <Input 
                 required
-                placeholder="Ex: Preenchimento Labial"
+                placeholder=""
                 className="h-12 bg-slate-50 border-slate-100 rounded-xl font-bold italic text-base px-4"
                 value={formData.name}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
@@ -286,11 +292,21 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
                 <Label className="text-xs font-black text-slate-400 italic uppercase">Categoria</Label>
-                <Select value={formData.category} onValueChange={v => setFormData({ ...formData, category: v })}>
+                <Select 
+                  value={formData.category} 
+                  onValueChange={v => {
+                    if (v === 'manage_categories') {
+                      setIsCategoryManagerOpen(true);
+                    } else {
+                      setFormData({ ...formData, category: v });
+                    }
+                  }}
+                >
                   <SelectTrigger className="h-12 bg-slate-50 border-slate-100 rounded-xl font-bold px-4">
-                    <SelectValue />
+                    <SelectValue placeholder="Selecione a categoria" />
                   </SelectTrigger>
                   <SelectContent className="z-[600]">
+                    <SelectItem value="manage_categories" className="font-black text-indigo-600 italic border-b border-slate-100/50 pb-1.5">+ Gerenciar Categorias...</SelectItem>
                     {serviceCategories.map(cat => (
                       <SelectItem key={cat} value={cat} className="font-bold">{cat}</SelectItem>
                     ))}
@@ -304,8 +320,8 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
                   <Input 
                     type="number"
                     className="h-12 bg-slate-50 border-slate-100 rounded-xl pl-11 font-bold"
-                    value={formData.durationMinutes}
-                    onChange={e => setFormData({ ...formData, durationMinutes: parseInt(e.target.value) || 0 })}
+                    value={formData.durationMinutes === 0 || isNaN(formData.durationMinutes) ? '' : formData.durationMinutes}
+                    onChange={e => setFormData({ ...formData, durationMinutes: e.target.value ? parseInt(e.target.value) : '' as unknown as number })}
                   />
                 </div>
               </div>
@@ -318,7 +334,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
                   <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 font-extrabold" />
                   <Input 
                     type="text"
-                    placeholder="Deixe em branco ou preencha o valor..."
+                    placeholder=""
                     className="h-12 bg-slate-50 border-slate-100 rounded-xl pl-11 font-mono font-bold text-base text-slate-800"
                     value={displayPrice}
                     onChange={handlePriceChange}
@@ -337,7 +353,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
                     onClick={() => setFormData(prev => ({ 
                       ...prev, 
                       generatesFollowUp: !prev.generatesFollowUp,
-                      followUpDays: !prev.generatesFollowUp ? 15 : 0 
+                      followUpDays: !prev.generatesFollowUp ? ('' as unknown as number) : 0 
                     }))}
                     className={cn(
                       "h-10 px-4 rounded-lg font-bold text-[10px] uppercase flex items-center gap-1.5 transition-all cursor-pointer shrink-0 border select-none",
@@ -368,8 +384,8 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
                         "h-10 bg-white rounded-lg font-bold text-xs px-3 focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all border-slate-200",
                         !formData.generatesFollowUp && "bg-slate-100/60 border-slate-100 text-slate-400 cursor-not-allowed select-none"
                       )}
-                      value={formData.generatesFollowUp ? formData.followUpDays : ''}
-                      onChange={e => setFormData({ ...formData, followUpDays: parseInt(e.target.value) || 0 })}
+                      value={formData.generatesFollowUp ? (formData.followUpDays || '') : ''}
+                      onChange={e => setFormData({ ...formData, followUpDays: e.target.value ? parseInt(e.target.value) : '' as unknown as number })}
                     />
                   </div>
                 </div>
@@ -480,7 +496,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
               <p className="text-slate-500 text-xs">Vincule os profissionais de saúde habilitados a realizar este serviço. Se nenhum for selecionado, o serviço estará disponível para toda a equipe.</p>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 bg-slate-50 p-5 rounded-2xl border border-slate-100 max-h-[200px] overflow-y-auto">
-                {professionals.map(p => {
+                {professionals.filter(p => p.tipoMembro !== 'gestao').map(p => {
                   const isChecked = (formData.professionalIds || []).includes(p.id);
                   return (
                     <label key={p.id} className="flex items-center gap-2.5 cursor-pointer group p-2 hover:bg-white rounded-xl border border-transparent hover:border-slate-100 transition-all select-none bg-white/40">
@@ -617,6 +633,96 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
             </Button>
           </DialogFooter>
         </form>
+
+        {/* MODAL DE GERENCIAMENTO DE CATEGORIAS */}
+        <Dialog open={isCategoryManagerOpen} onOpenChange={setIsCategoryManagerOpen}>
+          <DialogContent className="max-w-md p-6 bg-white border border-slate-100 rounded-3xl shadow-2xl z-[700]">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-black italic uppercase text-slate-900 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-indigo-600" />
+                Gerenciar Categorias
+              </DialogTitle>
+              <p className="text-slate-500 text-xs mt-1">
+                Adicione novas categorias ou exclua as existentes. As alterações refletirão imediatamente.
+              </p>
+            </DialogHeader>
+
+            <div className="space-y-4 py-4">
+              {/* Input para Nova Categoria */}
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  placeholder="Nome da categoria..."
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  className="h-10 bg-slate-50 border-slate-100 rounded-xl font-bold"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddCategory();
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  onClick={handleAddCategory}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-black italic rounded-xl px-4 h-10 text-xs uppercase"
+                >
+                  + Adicionar
+                </Button>
+              </div>
+
+              {/* Lista de Categorias */}
+              <div className="space-y-2 border border-slate-100 rounded-2xl p-4 bg-slate-50/50 max-h-[220px] overflow-y-auto">
+                {serviceCategories.length === 0 ? (
+                  <p className="text-center text-xs text-slate-400 font-bold italic">Nenhuma categoria cadastrada.</p>
+                ) : (
+                  serviceCategories.map((cat) => (
+                    <div
+                      key={cat}
+                      className="flex items-center justify-between p-2.5 bg-white border border-slate-100 rounded-xl hover:border-slate-200 transition-all"
+                    >
+                      <span className="text-xs font-bold text-slate-700 capitalize">{cat}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCategory(cat)}
+                        className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 transition-all"
+                        title="Excluir categoria"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="w-4 h-4"
+                        >
+                          <path d="M3 6h18" />
+                          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                onClick={() => setIsCategoryManagerOpen(false)}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black italic rounded-xl h-11 text-xs uppercase"
+              >
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   );

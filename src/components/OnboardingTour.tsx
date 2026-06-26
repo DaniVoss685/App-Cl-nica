@@ -454,22 +454,7 @@ export function OnboardingTour() {
 
   return (
     <>
-      {/* FLOATING DOUBT BUTTON - STICKY AND POLISHED */}
-      <div className="fixed bottom-28 right-6 z-[80]">
-        <motion.button
-          onClick={() => setIsDoubtHubOpen(true)}
-          whileHover={{ scale: 1.08 }}
-          whileTap={{ scale: 0.95 }}
-          className="bg-indigo-600 text-white rounded-full px-5 py-3.5 flex items-center gap-2 shadow-xl hover:bg-indigo-700 font-extrabold italic tracking-tight text-xs uppercase cursor-pointer border-2 border-indigo-400/20 group"
-        >
-          <HelpCircle className="w-5 h-5 text-indigo-100 group-hover:rotate-12 transition-transform" />
-          <span>Dúvidas & Tutorial</span>
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-          </span>
-        </motion.button>
-      </div>
+
 
       {/* 1. TOUR SPOTLIGHT HIGHLIGHT BOX */}
       {isTourActive && highlightRect && !isModalStep && (

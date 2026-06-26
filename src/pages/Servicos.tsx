@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { motion } from 'motion/react';
 import { Card } from '../components/ui/card';
@@ -18,11 +18,64 @@ import {
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
 import { ServiceModal } from '../components/ServiceModal';
+import { toast } from 'sonner';
 
 export function Servicos() {
-  const { services, serviceCategories, professionals } = useStore();
+  const { services, serviceCategories, professionals, clinicType, addService } = useStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
+
+  const suggestionsMap = useMemo<Record<string, Array<{ name: string; durationMinutes: number; price: number; category: string }>>>(() => ({
+    odontologia: [
+      { name: 'Limpeza / Profilaxia', durationMinutes: 45, price: 150, category: 'procedimento' },
+      { name: 'Clareamento Dental', durationMinutes: 60, price: 800, category: 'estética' },
+      { name: 'Restauração de Resina', durationMinutes: 60, price: 200, category: 'procedimento' },
+      { name: 'Extração Simples', durationMinutes: 60, price: 250, category: 'procedimento' },
+      { name: 'Implante Dentário', durationMinutes: 120, price: 3500, category: 'procedimento' }
+    ],
+    estética: [
+      { name: 'Aplicação de Botox', durationMinutes: 45, price: 1200, category: 'estética' },
+      { name: 'Preenchimento Labial', durationMinutes: 60, price: 1500, category: 'estética' },
+      { name: 'Limpeza de Pele Profunda', durationMinutes: 90, price: 200, category: 'procedimento' },
+      { name: 'Drenagem Linfática', durationMinutes: 60, price: 150, category: 'procedimento' },
+      { name: 'Peeling Químico', durationMinutes: 45, price: 350, category: 'procedimento' }
+    ],
+    medicina: [
+      { name: 'Consulta Médica Especializada', durationMinutes: 45, price: 400, category: 'consulta' },
+      { name: 'Check-up Geral', durationMinutes: 60, price: 600, category: 'procedimento' },
+      { name: 'Teleconsulta', durationMinutes: 30, price: 250, category: 'consulta' }
+    ],
+    fisioterapia: [
+      { name: 'Avaliação Fisioterapêutica', durationMinutes: 60, price: 180, category: 'consulta' },
+      { name: 'Sessão de Fisioterapia', durationMinutes: 60, price: 120, category: 'procedimento' },
+      { name: 'Sessão de RPG', durationMinutes: 60, price: 150, category: 'procedimento' }
+    ],
+    psicologia: [
+      { name: 'Psicoterapia Individual', durationMinutes: 50, price: 150, category: 'consulta' },
+      { name: 'Avaliação Neuropsicológica', durationMinutes: 90, price: 300, category: 'procedimento' },
+      { name: 'Terapia de Casal', durationMinutes: 60, price: 220, category: 'consulta' }
+    ]
+  }), []);
+
+  const normalizedType = (clinicType || '').toLowerCase();
+  
+  const suggestions = useMemo(() => {
+    const list = suggestionsMap[normalizedType] || [];
+    return list.filter(item => !services.some(s => s.name.toLowerCase() === item.name.toLowerCase()));
+  }, [normalizedType, services, suggestionsMap]);
+
+  const handleAddSuggestedService = (suggestion: any) => {
+    addService({
+      name: suggestion.name,
+      durationMinutes: suggestion.durationMinutes,
+      price: suggestion.price,
+      category: suggestion.category,
+      generatesFollowUp: false,
+      itemCosts: [],
+      professionalIds: []
+    });
+    toast.success(`Serviço "${suggestion.name}" adicionado com sucesso!`);
+  };
 
   React.useEffect(() => {
     const handleOpen = () => {
@@ -90,6 +143,47 @@ export function Servicos() {
           ))}
         </div>
       </div>
+
+      {/* Suggestions Section */}
+      {suggestions.length > 0 && (
+        <motion.div 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-6 bg-indigo-50/30 border border-indigo-100/50 rounded-[2.5rem] shadow-sm space-y-4"
+        >
+          <div className="flex items-center gap-2 text-indigo-800">
+            <Sparkles className="w-5 h-5 text-indigo-600" />
+            <h3 className="font-black italic uppercase tracking-tight text-xs">
+              Procedimentos sugeridos para {clinicType}
+            </h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {suggestions.map((suggestion) => (
+              <div 
+                key={suggestion.name} 
+                className="bg-white border border-slate-100 p-4 rounded-2xl flex flex-col justify-between hover:shadow-md transition-all gap-3"
+              >
+                <div>
+                  <h4 className="font-black text-slate-800 text-sm italic capitalize leading-tight">{suggestion.name}</h4>
+                  <Badge variant="outline" className="text-[9px] bg-slate-50 border-slate-100 text-slate-500 font-bold uppercase mt-1">
+                    {suggestion.category}
+                  </Badge>
+                  <div className="flex gap-4 mt-3 text-[11px] font-bold text-slate-500">
+                    <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-indigo-500" /> {suggestion.durationMinutes} min</span>
+                    <span className="flex items-center gap-1 text-green-600 font-mono"><DollarSign className="w-3.5 h-3.5 text-green-500" /> R$ {suggestion.price}</span>
+                  </div>
+                </div>
+                <Button 
+                  onClick={() => handleAddSuggestedService(suggestion)}
+                  className="w-full h-9 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Adicionar
+                </Button>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       <motion.div 
         variants={{

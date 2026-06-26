@@ -284,7 +284,7 @@ export function Agenda() {
               </SelectTrigger>
               <SelectContent className="z-[50]">
                 <SelectItem value="all" className="font-bold text-xs uppercase">Todos Profissionais</SelectItem>
-                {professionals.map(p => (
+                {professionals.filter(p => p.tipoMembro !== 'gestao').map(p => (
                   <SelectItem key={p.id} value={p.id} className="font-bold text-xs uppercase">Dr(a). {p.name}</SelectItem>
                 ))}
               </SelectContent>

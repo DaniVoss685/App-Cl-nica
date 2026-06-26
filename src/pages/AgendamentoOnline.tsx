@@ -390,7 +390,7 @@ export function AgendamentoOnline() {
                   </h3>
                   
                   <div className="space-y-3">
-                    {professionals.map(p => {
+                    {professionals.filter(p => p.tipoMembro !== 'gestao').map(p => {
                       const isSelected = selectedProfessionalId === p.id;
                       // Display dynamic shifts for professionals
                       const shift = p.name.toLowerCase().includes('carlos') ? 'Manhã (08h às 12h)' : 'Integral (08h às 18h)';

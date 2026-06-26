@@ -16,12 +16,56 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { format, addDays, isAfter, isBefore } from 'date-fns';
+import { format, addDays, isAfter, isBefore, startOfMonth, isWithinInterval } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export function Retornos() {
   const { patients, appointments, services } = useStore();
   const [searchTerm, setSearchTerm] = useState('');
+
+  const patientsWithAppointments = useMemo(() => {
+    return patients.filter(p => appointments.some(a => a.patientId === p.id && a.status === 'realizado'));
+  }, [patients, appointments]);
+
+  const returnedPatients = useMemo(() => {
+    return patients.filter(p => {
+      const patientAppts = appointments.filter(a => a.patientId === p.id && a.status === 'realizado');
+      return patientAppts.length > 1;
+    });
+  }, [patients, appointments]);
+
+  const returnRate = useMemo(() => {
+    if (patientsWithAppointments.length === 0) return 0;
+    return Math.round((returnedPatients.length / patientsWithAppointments.length) * 100);
+  }, [patientsWithAppointments, returnedPatients]);
+
+  const recoveredCount = useMemo(() => {
+    const today = new Date();
+    const startOfCurrentMonth = startOfMonth(today);
+    
+    return patients.filter(p => {
+      const apptsInMonth = appointments.filter(a => 
+        a.patientId === p.id && 
+        (a.status === 'confirmado' || a.status === 'realizado') &&
+        isWithinInterval(new Date(a.date + 'T12:00:00'), { start: startOfCurrentMonth, end: today })
+      );
+      if (apptsInMonth.length === 0) return false;
+      
+      const prevAppts = appointments.filter(a => 
+        a.patientId === p.id && 
+        a.status === 'realizado' &&
+        isBefore(new Date(a.date + 'T12:00:00'), startOfCurrentMonth)
+      ).sort((a, b) => b.date.localeCompare(a.date));
+      
+      const lastPrevAppt = prevAppts[0];
+      if (!lastPrevAppt) return false;
+      
+      const firstThisMonthDate = new Date(apptsInMonth[0].date + 'T12:00:00');
+      const lastPrevDate = new Date(lastPrevAppt.date + 'T12:00:00');
+      const gap = Math.floor((firstThisMonthDate.getTime() - lastPrevDate.getTime()) / (1000 * 60 * 60 * 24));
+      return gap >= 30;
+    }).length;
+  }, [patients, appointments]);
 
   // Mock logic for returns: patients who finished a service and haven't returned in 30 days
   const pendingReturns = useMemo(() => {
@@ -68,7 +112,7 @@ export function Retornos() {
             <RefreshCcw className="w-5 h-5 text-indigo-600" />
             <div>
               <p className="text-[10px] font-black text-indigo-400 leading-none lowercase">Taxa de retorno</p>
-              <p className="text-lg font-black text-indigo-700">68%</p>
+              <p className="text-lg font-black text-indigo-700">{returnRate}%</p>
             </div>
           </Card>
         </div>
@@ -115,7 +159,7 @@ export function Retornos() {
               <p className="text-xs opacity-70 lowercase">este mês</p>
             </div>
           </div>
-          <p className="text-4xl font-black text-white italic mt-2">12</p>
+          <p className="text-4xl font-black text-white italic mt-2">{recoveredCount}</p>
         </Card>
       </div>
 

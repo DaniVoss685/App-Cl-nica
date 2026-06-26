@@ -74,12 +74,46 @@ export function Dashboard() {
     // Simple revenue sum from appointments in period
     const revenue = filteredAppointments.reduce((acc, current) => acc + (current.value || 0), 0);
     
+    // Dynamic Ocupação Médica
+    const daysCount = selectedDay !== 'todos' ? 1 : (selectedMonth !== 'todos' ? 22 : 22 * 12);
+    const activeProfs = (professionals || []).filter(p => p.active !== false).length;
+    const capacity = activeProfs * 8 * daysCount;
+    const medicalOccupation = capacity > 0 ? Math.min(100, Math.round((totalAppointments / capacity) * 100)) : 0;
+    
     return {
       totalAppointments,
       uniquePatients,
-      revenue
+      revenue,
+      medicalOccupation
     };
-  }, [filteredAppointments]);
+  }, [filteredAppointments, professionals, selectedMonth, selectedDay]);
+
+  const monthlyRevenueData = useMemo(() => {
+    const result = [];
+    const today = new Date();
+    const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    
+    for (let i = 5; i >= 0; i--) {
+      const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const yearStr = date.getFullYear().toString();
+      const monthStr = (date.getMonth() + 1).toString().padStart(2, '0');
+      const monthLabel = months[date.getMonth()];
+      
+      const totalRevenue = (finance || [])
+        .filter(f => {
+          if (f.type !== 'receita' || f.status !== 'pago') return false;
+          const [year, month] = f.dueDate.split('-');
+          return year === yearStr && month === monthStr;
+        })
+        .reduce((sum, f) => sum + f.amount, 0);
+        
+      result.push({
+        name: monthLabel,
+        value: totalRevenue
+      });
+    }
+    return result;
+  }, [finance]);
 
   const activeInsights = useMemo(() => insights.filter(i => !i.resolved).slice(0, 2), [insights]);
   const selectedInsight = useMemo(() => insights.find(i => i.id === selectedInsightId), [insights, selectedInsightId]);
@@ -142,7 +176,21 @@ export function Dashboard() {
             <Label className="text-[10px] uppercase text-slate-400 font-bold">Mês</Label>
             <Select value={selectedMonth} onValueChange={setSelectedMonth}>
               <SelectTrigger className="h-8 w-28 text-xs border-none bg-slate-50 hover:bg-slate-100 transition-colors">
-                <SelectValue />
+                <SelectValue>
+                  {selectedMonth === 'todos' ? 'Todos' : 
+                   selectedMonth === '01' ? 'Janeiro' :
+                   selectedMonth === '02' ? 'Fevereiro' :
+                   selectedMonth === '03' ? 'Março' :
+                   selectedMonth === '04' ? 'Abril' :
+                   selectedMonth === '05' ? 'Maio' :
+                   selectedMonth === '06' ? 'Junho' :
+                   selectedMonth === '07' ? 'Julho' :
+                   selectedMonth === '08' ? 'Agosto' :
+                   selectedMonth === '09' ? 'Setembro' :
+                   selectedMonth === '10' ? 'Outubro' :
+                   selectedMonth === '11' ? 'Novembro' :
+                   selectedMonth === '12' ? 'Dezembro' : 'Mês'}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent className="max-h-[400px]">
                 <SelectItem value="todos">Todos</SelectItem>
@@ -425,7 +473,7 @@ export function Dashboard() {
           <Card className="hover:shadow-md transition-all h-full">
             <CardContent className="p-4 flex flex-col justify-between h-full select-none">
               <span className="text-xs font-semibold text-slate-500 uppercase">Ocupação Médica</span>
-              <div className="mt-2 text-2xl font-bold text-slate-900">76%</div>
+              <div className="mt-2 text-2xl font-bold text-slate-900">{stats.medicalOccupation}%</div>
               <span className="text-xs text-slate-500 font-medium mt-1">Agendado vs Disponível</span>
             </CardContent>
           </Card>
@@ -656,7 +704,7 @@ export function Dashboard() {
           </CardHeader>
           <CardContent className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={mockRevenueData}>
+              <BarChart data={monthlyRevenueData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#64748b'}} />
                 <YAxis axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#64748b'}} tickFormatter={(v) => `R$${v/1000}k`} />

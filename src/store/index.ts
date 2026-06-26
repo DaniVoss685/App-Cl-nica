@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { addDays, format, subDays } from 'date-fns';
+import { supabase, toSnakeCase, toCamelCase } from '../lib/supabase';
 import { 
   Patient, 
   Appointment, 
@@ -45,9 +46,18 @@ interface ClinicState {
   serviceCategories: string[];
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (collapsed: boolean) => void;
-  setOnboarded: (data: { name: string; type: string; activateAI: boolean }) => void;
+  setOnboarded: (data: { name: string; type: string; activateAI: boolean }) => Promise<void>;
   setClinicName: (name: string) => void;
   
+  // Auth state & actions
+  currentClient: any | null;
+  loginClient: (username: string, password: string) => Promise<boolean>;
+  registerClient: (name: string, username: string, password: string, phone: string) => Promise<boolean>;
+  logoutClient: () => void;
+  syncFromSupabase: (clientId: string) => Promise<void>;
+  populateInitialMockData: (clientId: string) => Promise<void>;
+  syncToSupabase: (table: string, data: any, operation?: 'insert' | 'update' | 'delete') => Promise<void>;
+
   // Onboarding Tour state & actions
   isTourActive: boolean;
   currentTourStep: number;
@@ -72,6 +82,7 @@ interface ClinicState {
   addBudget: (b: any) => void;
   addOpportunity: (opp: any) => void;
   updateOpportunity: (id: string, opp: any) => void;
+  removeOpportunity: (id: string) => void;
   addPackage: (p: any) => void;
   updatePackage: (id: string, pkg: any) => void;
   addProfessional: (prof: Omit<Professional, 'id' | 'active'>) => void;
@@ -87,6 +98,7 @@ interface ClinicState {
   removeInventoryItem: (id: string) => void;
   addSupplyExpense: (expense: Omit<SupplyExpense, 'id'>) => void;
   addServiceCategory: (category: string) => void;
+  removeServiceCategory: (category: string) => void;
   addDocument: (d: Omit<Document, 'id'>) => void;
   removeDocument: (id: string) => void;
   bulkAddPatients: (ps: Omit<Patient, 'id' | 'createdAt'>[]) => void;
@@ -106,6 +118,35 @@ interface ClinicState {
   deleteRepoFile: (id: string) => void;
   renameRepoFile: (id: string, newName: string) => void;
 }
+
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+const uuidMap: Record<string, string> = {
+  '1': '11111111-1111-4111-a111-111111111111',
+  '2': '22222222-2222-4222-a222-222222222222',
+  '3': '33333333-3333-4333-a333-333333333333',
+  'p1': 'e1111111-1111-4111-b111-111111111111',
+  'p2': 'e2222222-2222-4222-b222-222222222222',
+  's1': 'c1111111-1111-4111-c111-111111111111',
+  's2': 'c2222222-2222-4222-c222-222222222222',
+  'i1': 'd1111111-1111-4111-d111-111111111111',
+  'i2': 'd2222222-2222-4222-d222-222222222222',
+  'i3': 'd3333333-3333-4333-d333-333333333333',
+  'a1': 'b1111111-1111-4111-e111-111111111111',
+  'a2': 'b2222222-2222-4222-e222-222222222222',
+  'a3': 'b3333333-3333-4333-e333-333333333333',
+  'a4': 'b4444444-4444-4444-e444-444444444444',
+  'f1': 'f1111111-1111-4111-f111-111111111111',
+  'f2': 'f2222222-2222-4222-f222-222222222222',
+};
 
 const today = new Date();
 const todayStr = format(today, 'yyyy-MM-dd');
@@ -130,8 +171,8 @@ const mockServices: Service[] = [
 ];
 
 const mockProfessionals: Professional[] = [
-  { id: 'p1', name: 'Dra. Beatriz Stark', specialty: 'Dermatologista', active: true, email: 'beatriz@stark.ai' },
-  { id: 'p2', name: 'Dr. Carlos Mendes', specialty: 'Cirurgião Plástico', active: true, email: 'carlos@stark.ai' },
+  { id: 'p1', name: 'Beatriz Stark', specialty: 'Dermatologista', active: true, email: 'beatriz@stark.ai' },
+  { id: 'p2', name: 'Carlos Mendes', specialty: 'Cirurgião Plástico', active: true, email: 'carlos@stark.ai' },
 ];
 
 const mockFinance: FinancialTransaction[] = [
@@ -170,7 +211,7 @@ const mockInsights: AIInsight[] = [
 
 export const useStore = create<ClinicState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       clinicName: 'clínica stark',
       clinicType: 'estética',
       profilePicture: null,
@@ -184,48 +225,473 @@ export const useStore = create<ClinicState>()(
         { id: 'u1', name: 'administrador', email: 'admin@clinicflow.ai', role: 'admin', active: true },
         { id: 'u2', name: 'recepcionista maria', email: 'recepcao@clinicflow.ai', role: 'recepção', active: true },
       ],
-      patients: mockPatients,
-      appointments: mockAppointments,
-      services: mockServices,
-      packages: [
-        {
-          id: 'pkg1',
-          name: 'Protocolo Rejuvenescimento Facial',
-          description: 'Combo completo de rejuvenescimento incluindo preenchimento labial e bioestimulador.',
-          price: 2000,
-          totalSessions: 10,
-          sessionInterval: 7,
-          includedServices: ['s2'],
-          active: true,
-          maxDiscountPercentage: 10,
-          maxInstallments: 12,
-          professionalIds: ['p1']
-        }
-      ],
-      finance: mockFinance,
+      patients: [],
+      appointments: [],
+      services: [],
+      packages: [],
+      finance: [],
       budgets: [],
       opportunities: [],
-      insights: mockInsights,
-      professionals: mockProfessionals,
+      insights: [],
+      professionals: [],
       medicalRecords: [],
       documents: [],
       reminders: [],
-      inventory: [
-        { id: 'i1', name: 'Luvas de Procedimento', category: 'materiais', unitCost: 150.00, unit: 'pacote', quantity: 5, minQuantity: 2, unitsPerPackage: 100, subUnitName: 'unidade' },
-        { id: 'i2', name: 'Seringas Descartáveis 5ml', category: 'materiais', unitCost: 2.00, unit: 'unidade', quantity: 25, minQuantity: 15 },
-        { id: 'i3', name: 'Ácido Hialurônico Ultra 1ml', category: 'insumos', unitCost: 180.00, unit: 'ml', quantity: 5, minQuantity: 4 },
-        { id: 'i4', name: 'Anestésico Tópico Pomada', category: 'insumos', unitCost: 45.00, unit: 'g', quantity: 3, minQuantity: 2 }
-      ],
-      supplyExpenses: [
-        { id: 'se1', itemId: 'i1', itemName: 'Luvas de Procedimento (Par)', quantityUsed: 2, serviceName: 'consulta inicial', patientName: 'maria silva', totalCost: 3.00, date: todayStr },
-        { id: 'se2', itemId: 'i3', itemName: 'Ácido Hialurônico Ultra 1ml', quantityUsed: 1, serviceName: 'preenchimento labial', patientName: 'joão santos', totalCost: 180.00, date: todayStr }
-      ],
+      inventory: [],
+      supplyExpenses: [],
       serviceCategories: ['consulta', 'procedimento', 'estética'],
-      repoFolders: ['Modelos', 'Financeiro', 'Jurídico', 'Pacientes', 'Branding'],
+      repoFolders: [],
       repoFiles: [],
       sidebarCollapsed: false,
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
       
+      // Auth implementation
+      currentClient: null,
+
+      loginClient: async (username, password) => {
+        try {
+          let dataClient = null;
+          let isEmployee = false;
+          let employeeData = null;
+
+          const { data: clientRes } = await supabase
+            .from('clientes_clinica')
+            .select('*')
+            .eq('username', username.toLowerCase().trim())
+            .eq('password', password)
+            .maybeSingle();
+
+          if (clientRes) {
+            dataClient = clientRes;
+          } else {
+            // Tenta buscar nos profissionais da equipe
+            const { data: profRes } = await supabase
+              .from('profissionais_clinica')
+              .select('*')
+              .eq('username', username.toLowerCase().trim())
+              .eq('password', password)
+              .eq('active', true)
+              .maybeSingle();
+
+            if (profRes) {
+              isEmployee = true;
+              employeeData = profRes;
+              
+              // Busca os dados do cliente associado para carregar a clínica
+              const { data: clinicRes } = await supabase
+                .from('clientes_clinica')
+                .select('*')
+                .eq('id', profRes.cliente_clinica_id)
+                .single();
+              
+              if (clinicRes) {
+                dataClient = clinicRes;
+              }
+            }
+          }
+
+          if (!dataClient) {
+            return false;
+          }
+
+          const client = toCamelCase(dataClient);
+          
+          if (isEmployee && employeeData) {
+            const emp = toCamelCase(employeeData);
+            const employeeRole = emp.tipoMembro === 'clinico' ? 'profissional' : 'recepção';
+            
+            set({
+              currentClient: client,
+              clinicName: client.clinicName || 'clínica stark',
+              clinicType: client.clinicType || 'estética',
+              activateAI: client.activateAi ?? true,
+              isOnboarded: client.isOnboarded ?? false,
+              currentUser: {
+                id: emp.id,
+                name: emp.name,
+                email: emp.email || '',
+                role: employeeRole,
+                active: true,
+                allowedTabs: emp.allowedTabs || [],
+                professionalId: emp.id,
+                foto: emp.foto
+              }
+            });
+          } else {
+            // Login como Dono (admin)
+            set({ 
+              currentClient: client,
+              clinicName: client.clinicName || 'clínica stark',
+              clinicType: client.clinicType || 'estética',
+              activateAI: client.activateAi ?? true,
+              isOnboarded: client.isOnboarded ?? false,
+              currentUser: { 
+                id: 'u1', 
+                name: client.name || 'administrador', 
+                email: client.username || 'admin@clinicflow.ai', 
+                role: 'admin', 
+                active: true,
+                allowedTabs: []
+              }
+            });
+          }
+
+          // Carrega dados dele em background
+          await get().syncFromSupabase(client.id);
+
+          return true;
+        } catch (e) {
+          console.error('Erro no login:', e);
+          return false;
+        }
+      },
+
+      registerClient: async (name, username, password, phone) => {
+        try {
+          const formattedUsername = username.toLowerCase().trim();
+          
+          const { data: existing } = await supabase
+            .from('clientes_clinica')
+            .select('id')
+            .eq('username', formattedUsername)
+            .maybeSingle();
+
+          if (existing) {
+            throw new Error('Usuário já cadastrado');
+          }
+
+          const { data, error } = await supabase
+            .from('clientes_clinica')
+            .insert({
+              name,
+              username: formattedUsername,
+              password,
+              phone,
+              clinic_name: '',
+              clinic_type: '',
+              activate_ai: true,
+              is_onboarded: false
+            })
+            .select()
+            .single();
+
+          if (error || !data) {
+            return false;
+          }
+
+          return true;
+        } catch (e) {
+          console.error('Erro no cadastro:', e);
+          throw e;
+        }
+      },
+
+      logoutClient: () => {
+        set({ 
+          currentClient: null,
+          clinicName: 'clínica stark',
+          clinicType: 'estética',
+          activateAI: true,
+          isOnboarded: false,
+          patients: [],
+          appointments: [],
+          services: [],
+          professionals: [],
+          finance: [],
+          packages: [],
+          inventory: [],
+          supplyExpenses: [],
+          insights: [],
+          repoFolders: [],
+          repoFiles: []
+        });
+      },
+
+      syncToSupabase: async (table, data, operation = 'update') => {
+        const { currentClient } = get();
+        if (!currentClient) return;
+
+        try {
+          if (operation === 'delete') {
+            await supabase
+              .from(table)
+              .delete()
+              .eq('id', data.id)
+              .eq('cliente_clinica_id', currentClient.id);
+          } else {
+            const dbData = {
+              ...toSnakeCase(data),
+              cliente_clinica_id: currentClient.id
+            };
+            if (operation === 'insert') {
+              await supabase.from(table).insert(dbData);
+            } else {
+              await supabase
+                .from(table)
+                .update(dbData)
+                .eq('id', data.id)
+                .eq('cliente_clinica_id', currentClient.id);
+            }
+          }
+        } catch (e) {
+          console.error(`Erro ao sincronizar tabela ${table} (${operation}):`, e);
+        }
+      },
+
+      syncFromSupabase: async (clientId) => {
+        try {
+          const localPatients = get().patients || [];
+          const localAppointments = get().appointments || [];
+          const localServices = get().services || [];
+          const localProfessionals = get().professionals || [];
+          const localFinance = get().finance || [];
+          const localPackages = get().packages || [];
+          const localInventory = get().inventory || [];
+          const localSupplyExpenses = get().supplyExpenses || [];
+          const localOpportunities = get().opportunities || [];
+          const localMedicalRecords = get().medicalRecords || [];
+          const localDocuments = get().documents || [];
+
+          const isUUID = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+          const localIdMap: Record<string, string> = {};
+
+          const checkAndMap = (id: string) => {
+            if (id && !isUUID(id) && !localIdMap[id]) {
+              localIdMap[id] = uuidMap[id] || generateUUID();
+            }
+          };
+
+          localPatients.forEach(p => checkAndMap(p.id));
+          localServices.forEach(s => checkAndMap(s.id));
+          localProfessionals.forEach(pr => checkAndMap(pr.id));
+          localInventory.forEach(i => checkAndMap(i.id));
+          localAppointments.forEach(a => checkAndMap(a.id));
+          localFinance.forEach(f => checkAndMap(f.id));
+          localPackages.forEach(pkg => checkAndMap(pkg.id));
+          localOpportunities.forEach(opp => checkAndMap(opp.id));
+          localMedicalRecords.forEach(mr => checkAndMap(mr.id));
+          localDocuments.forEach(d => checkAndMap(d.id));
+
+          const hasInvalidIds = Object.keys(localIdMap).length > 0;
+
+          if (hasInvalidIds) {
+            console.log('Detectados IDs locais legados que não são UUIDs. Iniciando migração...', localIdMap);
+
+            const migratedPatients = localPatients.map(p => ({
+              ...p,
+              id: localIdMap[p.id] || p.id
+            }));
+
+            const migratedServices = localServices.map(s => ({
+              ...s,
+              id: localIdMap[s.id] || s.id,
+              professionalIds: s.professionalIds?.map(id => localIdMap[id] || id) || [],
+              itemCosts: s.itemCosts?.map(ic => ({ ...ic, itemId: localIdMap[ic.itemId] || ic.itemId })) || []
+            }));
+
+            const migratedProfessionals = migratedPatients.length > 0 ? localProfessionals.map(pr => ({
+              ...pr,
+              id: localIdMap[pr.id] || pr.id
+            })) : localProfessionals;
+
+            const migratedInventory = localInventory.map(i => ({
+              ...i,
+              id: localIdMap[i.id] || i.id
+            }));
+
+            const migratedAppointments = localAppointments.map(a => ({
+              ...a,
+              id: localIdMap[a.id] || a.id,
+              patientId: localIdMap[a.patientId] || a.patientId,
+              professionalId: localIdMap[a.professionalId] || a.professionalId,
+              serviceId: localIdMap[a.serviceId] || a.serviceId
+            }));
+
+            const migratedFinance = localFinance.map(f => ({
+              ...f,
+              id: localIdMap[f.id] || f.id,
+              patientId: f.patientId ? (localIdMap[f.patientId] || f.patientId) : undefined
+            }));
+
+            const migratedMedicalRecords = localMedicalRecords.map(r => ({
+              ...r,
+              id: localIdMap[r.id] || r.id,
+              patientId: localIdMap[r.patientId] || r.patientId
+            }));
+
+            const migratedDocuments = localDocuments.map(d => ({
+              ...d,
+              id: localIdMap[d.id] || d.id,
+              patientId: d.patientId ? (localIdMap[d.patientId] || d.patientId) : undefined
+            }));
+
+            const migratedPackages = localPackages.map(pkg => ({
+              ...pkg,
+              id: localIdMap[pkg.id] || pkg.id
+            }));
+
+            const migratedOpportunities = localOpportunities.map(opp => ({
+              ...opp,
+              id: localIdMap[opp.id] || opp.id
+            }));
+
+            set({
+              patients: migratedPatients,
+              services: migratedServices,
+              professionals: migratedProfessionals,
+              inventory: migratedInventory,
+              appointments: migratedAppointments,
+              finance: migratedFinance,
+              medicalRecords: migratedMedicalRecords,
+              documents: migratedDocuments,
+              packages: migratedPackages,
+              opportunities: migratedOpportunities
+            });
+
+            try {
+              if (migratedProfessionals.length > 0) {
+                const dbProfs = migratedProfessionals.map(pr => ({ ...toSnakeCase(pr), cliente_clinica_id: clientId }));
+                await supabase.from('profissionais_clinica').upsert(dbProfs);
+              }
+              if (migratedServices.length > 0) {
+                const dbServices = migratedServices.map(s => ({ ...toSnakeCase(s), cliente_clinica_id: clientId }));
+                await supabase.from('servicos_clinica').upsert(dbServices);
+              }
+              if (migratedInventory.length > 0) {
+                const dbInventory = migratedInventory.map(i => ({ ...toSnakeCase(i), cliente_clinica_id: clientId }));
+                await supabase.from('inventario_clinica').upsert(dbInventory);
+              }
+              if (migratedPatients.length > 0) {
+                const dbPatients = migratedPatients.map(p => ({ ...toSnakeCase(p), cliente_clinica_id: clientId }));
+                await supabase.from('pacientes_clinica').upsert(dbPatients);
+              }
+              if (migratedPackages.length > 0) {
+                const dbPkgs = migratedPackages.map(pkg => ({ ...toSnakeCase(pkg), cliente_clinica_id: clientId }));
+                await supabase.from('pacotes_clinica').upsert(dbPkgs);
+              }
+              if (migratedAppointments.length > 0) {
+                const dbAppts = migratedAppointments.map(a => ({ ...toSnakeCase(a), cliente_clinica_id: clientId }));
+                await supabase.from('agendamentos_clinica').upsert(dbAppts);
+              }
+              if (migratedFinance.length > 0) {
+                const dbFinance = migratedFinance.map(f => ({ ...toSnakeCase(f), cliente_clinica_id: clientId }));
+                await supabase.from('financeiro_clinica').upsert(dbFinance);
+              }
+              if (migratedOpportunities.length > 0) {
+                const dbOpps = migratedOpportunities.map(opp => ({ ...toSnakeCase(opp), cliente_clinica_id: clientId }));
+                await supabase.from('oportunidades_clinica').upsert(dbOpps);
+              }
+              console.log('Migração concluída com sucesso!');
+            } catch (errUpsert) {
+              console.error('Erro ao realizar upsert de dados migrados no Supabase:', errUpsert);
+            }
+          }
+
+          const [ps, appts, servs, profs, fin, pkgs, inv, exp, opps] = await Promise.all([
+            supabase.from('pacientes_clinica').select('*').eq('cliente_clinica_id', clientId),
+            supabase.from('agendamentos_clinica').select('*').eq('cliente_clinica_id', clientId),
+            supabase.from('servicos_clinica').select('*').eq('cliente_clinica_id', clientId),
+            supabase.from('profissionais_clinica').select('*').eq('cliente_clinica_id', clientId),
+            supabase.from('financeiro_clinica').select('*').eq('cliente_clinica_id', clientId),
+            supabase.from('pacotes_clinica').select('*').eq('cliente_clinica_id', clientId),
+            supabase.from('inventario_clinica').select('*').eq('cliente_clinica_id', clientId),
+            supabase.from('despesas_insumos_clinica').select('*').eq('cliente_clinica_id', clientId),
+            supabase.from('oportunidades_clinica').select('*').eq('cliente_clinica_id', clientId),
+          ]);
+
+          set({
+            patients: ps.data ? toCamelCase(ps.data) : [],
+            appointments: appts.data ? toCamelCase(appts.data) : [],
+            services: servs.data ? toCamelCase(servs.data) : [],
+            professionals: profs.data ? toCamelCase(profs.data) : [],
+            finance: fin.data ? toCamelCase(fin.data) : [],
+            packages: pkgs.data ? toCamelCase(pkgs.data) : [],
+            inventory: inv.data ? toCamelCase(inv.data) : [],
+            supplyExpenses: exp.data ? toCamelCase(exp.data) : [],
+            opportunities: opps.data ? toCamelCase(opps.data) : []
+          });
+        } catch (e) {
+          console.error('Erro ao buscar dados do Supabase:', e);
+        }
+      },
+
+      populateInitialMockData: async (clientId) => {
+        try {
+          const { count } = await supabase
+            .from('pacientes_clinica')
+            .select('*', { count: 'exact', head: true })
+            .eq('cliente_clinica_id', clientId);
+
+          if (count && count > 0) return;
+
+          console.log('Populando dados iniciais no Supabase para isolamento...');
+
+          // Inserir Pacientes
+          const dbPatients = mockPatients.map(p => {
+            const mapped = { ...p, id: uuidMap[p.id] || p.id };
+            return { ...toSnakeCase(mapped), cliente_clinica_id: clientId };
+          });
+          await supabase.from('pacientes_clinica').insert(dbPatients);
+
+          // Inserir Profissionais
+          const dbProfs = mockProfessionals.map(pr => {
+            const mapped = { ...pr, id: uuidMap[pr.id] || pr.id };
+            return { ...toSnakeCase(mapped), cliente_clinica_id: clientId };
+          });
+          await supabase.from('profissionais_clinica').insert(dbProfs);
+
+          // Inserir Serviços
+          const dbServices = mockServices.map(s => {
+            const mapped = { 
+              ...s, 
+              id: uuidMap[s.id] || s.id,
+              professionalIds: s.professionalIds?.map(pid => uuidMap[pid] || pid) || [],
+              itemCosts: s.itemCosts?.map(ic => ({ ...ic, itemId: uuidMap[ic.itemId] || ic.itemId })) || []
+            };
+            return { ...toSnakeCase(mapped), cliente_clinica_id: clientId };
+          });
+          await supabase.from('servicos_clinica').insert(dbServices);
+
+          // Inserir Financeiro
+          const dbFinance = mockFinance.map(f => {
+            const mapped = { 
+              ...f, 
+              id: uuidMap[f.id] || f.id,
+              patientId: uuidMap[f.patientId] || f.patientId
+            };
+            return { ...toSnakeCase(mapped), cliente_clinica_id: clientId };
+          });
+          await supabase.from('financeiro_clinica').insert(dbFinance);
+
+          // Inserir Inventário
+          const basicInventory = [
+            { id: 'i1', name: 'Luvas de Procedimento (Par)', unit: 'unidade', unitCost: 1.50, category: 'descartável', quantity: 150, minQuantity: 20 },
+            { id: 'i2', name: 'Seringa Descartável 3ml', unit: 'unidade', unitCost: 2.20, category: 'descartável', quantity: 80, minQuantity: 15 },
+            { id: 'i3', name: 'Ácido Hialurônico Ultra 1ml', unit: 'ml', unitCost: 180.00, category: 'estética', quantity: 12, minQuantity: 3 }
+          ];
+          const dbInv = basicInventory.map(i => {
+            const mapped = { ...i, id: uuidMap[i.id] || i.id };
+            return { ...toSnakeCase(mapped), cliente_clinica_id: clientId };
+          });
+          await supabase.from('inventario_clinica').insert(dbInv);
+
+          // Inserir Agendamentos
+          const dbAppts = mockAppointments.map(a => {
+            const mapped = { 
+              ...a, 
+              id: uuidMap[a.id] || a.id,
+              patientId: uuidMap[a.patientId] || a.patientId,
+              professionalId: uuidMap[a.professionalId] || a.professionalId,
+              serviceId: uuidMap[a.serviceId] || a.serviceId
+            };
+            return { ...toSnakeCase(mapped), cliente_clinica_id: clientId };
+          });
+          await supabase.from('agendamentos_clinica').insert(dbAppts);
+        } catch (e) {
+          console.error('Erro ao popular dados de demonstração:', e);
+        }
+      },
+
       // Onboarding Tour state implementation
       isTourActive: false,
       currentTourStep: 0,
@@ -234,21 +700,76 @@ export const useStore = create<ClinicState>()(
       prevTourStep: () => set((state) => ({ currentTourStep: Math.max(0, state.currentTourStep - 1) })),
       endTour: () => set({ isTourActive: false, currentTourStep: 0 }),
 
-      setOnboarded: (data) => set({ 
-        isOnboarded: true, 
-        clinicName: data.name, 
-        clinicType: data.type,
-        activateAI: data.activateAI
-      }),
+      setOnboarded: async (data) => {
+        const { currentClient } = get();
+        if (currentClient) {
+          try {
+            await supabase
+              .from('clientes_clinica')
+              .update({
+                clinic_name: data.name,
+                clinic_type: data.type,
+                activate_ai: data.activateAI,
+                is_onboarded: true
+              })
+              .eq('id', currentClient.id);
+
+            set({
+              currentClient: {
+                ...currentClient,
+                clinicName: data.name,
+                clinicType: data.type,
+                activateAi: data.activateAI,
+                isOnboarded: true
+              },
+              isOnboarded: true,
+              clinicName: data.name,
+              clinicType: data.type,
+              activateAI: data.activateAI
+            });
+          } catch (e) {
+            console.error('Erro ao salvar onboarding no Supabase:', e);
+          }
+        } else {
+          set({ 
+            isOnboarded: true, 
+            clinicName: data.name, 
+            clinicType: data.type,
+            activateAI: data.activateAI
+          });
+        }
+      },
+      
       setClinicName: (name) => set({ clinicName: name }),
       setProfilePicture: (pic) => set({ profilePicture: pic }),
       setFinanceConfig: (pix, bank, account) => set({ pixKey: pix, bankName: bank, bankAccount: account }),
-      addPatient: (p) => set((state) => ({ patients: [...state.patients, { ...p, id: p.id || Math.random().toString(), createdAt: new Date().toISOString() }] })),
-      updatePatient: (id, data) => set((state) => ({ patients: state.patients.map(p => p.id === id ? { ...p, ...data } : p) })),
-      removePatient: (id) => set((state) => ({ patients: state.patients.filter(p => p.id !== id) })),
-      addAppointment: (a) => set((state) => ({ appointments: [...state.appointments, { ...a, id: Math.random().toString(), confirmationStatus: a.confirmationStatus || 'pendente' }] })),
+      
+      addPatient: (p) => {
+        const newPatient = { ...p, id: p.id || generateUUID(), createdAt: new Date().toISOString() };
+        set((state) => ({ patients: [...state.patients, newPatient] }));
+        get().syncToSupabase('pacientes_clinica', newPatient, 'insert');
+      },
+      updatePatient: (id, data) => set((state) => {
+        const updated = state.patients.map(p => p.id === id ? { ...p, ...data } : p);
+        const patient = updated.find(p => p.id === id);
+        if (patient) get().syncToSupabase('pacientes_clinica', patient, 'update');
+        return { patients: updated };
+      }),
+      removePatient: (id) => {
+        set((state) => ({ patients: state.patients.filter(p => p.id !== id) }));
+        get().syncToSupabase('pacientes_clinica', { id }, 'delete');
+      },
+      
+      addAppointment: (a) => {
+        const newAppt = { ...a, id: generateUUID(), confirmationStatus: a.confirmationStatus || 'pendente' };
+        set((state) => ({ appointments: [...state.appointments, newAppt] }));
+        get().syncToSupabase('agendamentos_clinica', newAppt, 'insert');
+      },
       updateAppointment: (id, data) => set((state) => {
         const updated = state.appointments.map(a => a.id === id ? { ...a, ...data } : a);
+        const appt = updated.find(a => a.id === id);
+        if (appt) get().syncToSupabase('agendamentos_clinica', appt, 'update');
+        
         const oldAppt = state.appointments.find(a => a.id === id);
         const isTransitionToCompleted = (data.status === 'realizado' || data.status === 'finalizado') && 
           oldAppt && oldAppt.status !== 'realizado' && oldAppt.status !== 'finalizado';
@@ -260,7 +781,6 @@ export const useStore = create<ClinicState>()(
           const service = state.services.find(s => s.id === (data.serviceId || oldAppt.serviceId));
           const patient = state.patients.find(p => p.id === (data.patientId || oldAppt.patientId));
           
-          // Use custom items used if provided, otherwise default to service configuration
           const itemsUsed = data.customItemCostsUsed || (service && service.itemCosts ? service.itemCosts : []);
           
           if (itemsUsed && itemsUsed.length > 0) {
@@ -272,20 +792,22 @@ export const useStore = create<ClinicState>()(
                   const newQty = Math.max(0, parseFloat(((invItem.quantity || 0) - deducted).toFixed(4)));
                   const totalCost = ((invItem.unitCost || 0) / scale) * ic.quantity;
                   
-                  updatedExpenses = [
-                    {
-                      id: Math.random().toString(),
-                      itemId: invItem.id,
-                      itemName: invItem.name,
-                      quantityUsed: ic.quantity,
-                      serviceName: service?.name || 'Procedimento',
-                      patientName: patient?.name || 'Paciente Geral',
-                      totalCost: totalCost,
-                      date: format(new Date(), 'yyyy-MM-dd')
-                    },
-                    ...updatedExpenses
-                  ];
+                  const newExpense = {
+                    id: Math.random().toString(),
+                    itemId: invItem.id,
+                    itemName: invItem.name,
+                    quantityUsed: ic.quantity,
+                    serviceName: service?.name || 'Procedimento',
+                    patientName: patient?.name || 'Paciente Geral',
+                    totalCost: totalCost,
+                    date: format(new Date(), 'yyyy-MM-dd')
+                  };
+
+                  updatedExpenses = [newExpense, ...updatedExpenses];
                   
+                  get().syncToSupabase('inventario_clinica', { ...invItem, quantity: newQty }, 'update');
+                  get().syncToSupabase('despesas_insumos_clinica', newExpense, 'insert');
+
                   return { ...invItem, quantity: newQty };
                 }
                 return invItem;
@@ -300,35 +822,123 @@ export const useStore = create<ClinicState>()(
           supplyExpenses: updatedExpenses 
         };
       }),
-      removeAppointment: (id) => set((state) => ({ appointments: state.appointments.filter(a => a.id !== id) })),
-      addService: (s) => set((state) => ({ services: [...state.services, { ...s, id: Math.random().toString() }] })),
-      updateService: (id, data) => set((state) => ({ services: state.services.map(s => s.id === id ? { ...s, ...data } : s) })),
-      removeService: (id) => set((state) => ({ services: state.services.filter(s => s.id !== id) })),
-      addFinance: (f) => set((state) => ({ finance: [...state.finance, { ...f, id: Math.random().toString() }] })),
-      updateFinance: (id, data) => set((state) => ({ finance: state.finance.map(f => f.id === id ? { ...f, ...data } : f) })),
-      removeFinance: (id) => set((state) => ({ finance: state.finance.filter(f => f.id !== id) })),
-      addBudget: (b) => set((state) => ({ budgets: [...state.budgets, { ...b, id: Math.random().toString() }] })),
-      addOpportunity: (opp) => set((state) => ({ opportunities: [...state.opportunities, { ...opp, id: Math.random().toString() }] })),
-      updateOpportunity: (id, opp) => set((state) => ({ opportunities: state.opportunities.map(o => o.id === id ? { ...o, ...opp } : o) })),
-      addPackage: (p) => set((state) => ({ packages: [...state.packages, { ...p, id: Math.random().toString() }] })),
-      updatePackage: (id, pkg) => set((state) => ({ packages: state.packages.map(p => p.id === id ? { ...p, ...pkg } : p) })),
-      addProfessional: (prof) => set((state) => ({ professionals: [...state.professionals, { ...prof, active: true, id: Math.random().toString() }] })),
-      updateProfessional: (id, data) => set((state) => ({ professionals: state.professionals.map(p => p.id === id ? { ...p, ...data } : p) })),
-      removeProfessional: (id) => set((state) => ({ professionals: state.professionals.filter(p => p.id !== id) })),
-      addMedicalRecord: (r) => set((state) => ({ medicalRecords: [{ ...r, id: Math.random().toString() }, ...state.medicalRecords] })),
+      removeAppointment: (id) => {
+        set((state) => ({ appointments: state.appointments.filter(a => a.id !== id) }));
+        get().syncToSupabase('agendamentos_clinica', { id }, 'delete');
+      },
+      
+      addService: (s) => {
+        const newServ = { ...s, id: generateUUID() };
+        set((state) => ({ services: [...state.services, newServ] }));
+        get().syncToSupabase('servicos_clinica', newServ, 'insert');
+      },
+      updateService: (id, data) => set((state) => {
+        const updated = state.services.map(s => s.id === id ? { ...s, ...data } : s);
+        const service = updated.find(s => s.id === id);
+        if (service) get().syncToSupabase('servicos_clinica', service, 'update');
+        return { services: updated };
+      }),
+      removeService: (id) => {
+        set((state) => ({ services: state.services.filter(s => s.id !== id) }));
+        get().syncToSupabase('servicos_clinica', { id }, 'delete');
+      },
+      
+      addFinance: (f) => {
+        const newFin = { ...f, id: generateUUID() };
+        set((state) => ({ finance: [...state.finance, newFin] }));
+        get().syncToSupabase('financeiro_clinica', newFin, 'insert');
+      },
+      updateFinance: (id, data) => set((state) => {
+        const updated = state.finance.map(f => f.id === id ? { ...f, ...data } : f);
+        const item = updated.find(f => f.id === id);
+        if (item) get().syncToSupabase('financeiro_clinica', item, 'update');
+        return { finance: updated };
+      }),
+      removeFinance: (id) => {
+        set((state) => ({ finance: state.finance.filter(f => f.id !== id) }));
+        get().syncToSupabase('financeiro_clinica', { id }, 'delete');
+      },
+      
+      addBudget: (b) => set((state) => ({ budgets: [...state.budgets, { ...b, id: generateUUID() }] })),
+      addOpportunity: (opp) => {
+        const newOpp = { ...opp, id: opp.id || generateUUID(), createdAt: new Date().toISOString() };
+        set((state) => ({ opportunities: [...state.opportunities, newOpp] }));
+        get().syncToSupabase('oportunidades_clinica', newOpp, 'insert');
+      },
+      updateOpportunity: (id, opp) => set((state) => {
+        const updated = state.opportunities.map(o => o.id === id ? { ...o, ...opp } : o);
+        const opportunity = updated.find(o => o.id === id);
+        if (opportunity) get().syncToSupabase('oportunidades_clinica', opportunity, 'update');
+        return { opportunities: updated };
+      }),
+      removeOpportunity: (id) => {
+        set((state) => ({ opportunities: state.opportunities.filter(o => o.id !== id) }));
+        get().syncToSupabase('oportunidades_clinica', { id }, 'delete');
+      },
+      
+      addPackage: (p) => {
+        const newPkg = { ...p, id: generateUUID() };
+        set((state) => ({ packages: [...state.packages, newPkg] }));
+        get().syncToSupabase('pacotes_clinica', newPkg, 'insert');
+      },
+      updatePackage: (id, pkg) => set((state) => {
+        const updated = state.packages.map(p => p.id === id ? { ...p, ...pkg } : p);
+        const item = updated.find(p => p.id === id);
+        if (item) get().syncToSupabase('pacotes_clinica', item, 'update');
+        return { packages: updated };
+      }),
+      
+      addProfessional: (prof) => {
+        const newProf = { ...prof, active: true, id: generateUUID() };
+        set((state) => ({ professionals: [...state.professionals, newProf] }));
+        get().syncToSupabase('profissionais_clinica', newProf, 'insert');
+      },
+      updateProfessional: (id, data) => set((state) => {
+        const updated = state.professionals.map(p => p.id === id ? { ...p, ...data } : p);
+        const prof = updated.find(p => p.id === id);
+        if (prof) get().syncToSupabase('profissionais_clinica', prof, 'update');
+        return { professionals: updated };
+      }),
+      removeProfessional: (id) => {
+        set((state) => ({ professionals: state.professionals.filter(p => p.id !== id) }));
+        get().syncToSupabase('profissionais_clinica', { id }, 'delete');
+      },
+      
+      addMedicalRecord: (r) => set((state) => ({ medicalRecords: [{ ...r, id: generateUUID() }, ...state.medicalRecords] })),
       updateMedicalRecord: (id, data) => set((state) => ({ medicalRecords: state.medicalRecords.map(r => r.id === id ? { ...r, ...data } : r) })),
       removeMedicalRecord: (id) => set((state) => ({ medicalRecords: state.medicalRecords.filter(r => r.id !== id) })),
-      addReminder: (rem) => set((state) => ({ reminders: [{ ...rem, id: Math.random().toString(), createdAt: new Date().toISOString() }, ...state.reminders] })),
+      
+      addReminder: (rem) => set((state) => ({ reminders: [{ ...rem, id: generateUUID(), createdAt: new Date().toISOString() }, ...state.reminders] })),
       removeReminder: (id) => set((state) => ({ reminders: state.reminders.filter(r => r.id !== id) })),
-      addInventoryItem: (item) => set((state) => ({ inventory: [...state.inventory, { ...item, id: Math.random().toString() }] })),
-      updateInventoryItem: (id, data) => set((state) => ({ inventory: state.inventory.map(i => i.id === id ? { ...i, ...data } : i) })),
-      removeInventoryItem: (id) => set((state) => ({ inventory: state.inventory.filter(i => i.id !== id) })),
-      addSupplyExpense: (expense) => set((state) => ({ supplyExpenses: [{ ...expense, id: Math.random().toString() }, ...(state.supplyExpenses || [])] })),
+      
+      addInventoryItem: (item) => {
+        const newItem = { ...item, id: generateUUID() };
+        set((state) => ({ inventory: [...state.inventory, newItem] }));
+        get().syncToSupabase('inventario_clinica', newItem, 'insert');
+      },
+      updateInventoryItem: (id, data) => set((state) => {
+        const updated = state.inventory.map(i => i.id === id ? { ...i, ...data } : i);
+        const item = updated.find(i => i.id === id);
+        if (item) get().syncToSupabase('inventario_clinica', item, 'update');
+        return { inventory: updated };
+      }),
+      removeInventoryItem: (id) => {
+        set((state) => ({ inventory: state.inventory.filter(i => i.id !== id) }));
+        get().syncToSupabase('inventario_clinica', { id }, 'delete');
+      },
+      
+      addSupplyExpense: (expense) => {
+        const newExpense = { ...expense, id: generateUUID() };
+        set((state) => ({ supplyExpenses: [newExpense, ...(state.supplyExpenses || [])] }));
+        get().syncToSupabase('despesas_insumos_clinica', newExpense, 'insert');
+      },
+      
       addServiceCategory: (category) => set((state) => ({ serviceCategories: state.serviceCategories.includes(category) ? state.serviceCategories : [...state.serviceCategories, category] })),
-      addDocument: (d) => set((state) => ({ documents: [{ ...d, id: Math.random().toString() }, ...state.documents] })),
+      removeServiceCategory: (category) => set((state) => ({ serviceCategories: state.serviceCategories.filter(cat => cat !== category) })),
+      addDocument: (d) => set((state) => ({ documents: [{ ...d, id: generateUUID() }, ...state.documents] })),
       removeDocument: (id) => set((state) => ({ documents: state.documents.filter(d => d.id !== id) })),
-      bulkAddPatients: (ps) => set((state) => ({ patients: [...state.patients, ...ps.map(p => ({ ...p, id: Math.random().toString(), createdAt: new Date().toISOString() }))] })),
-      addUser: (u) => set((state) => ({ users: [...state.users, { ...u, active: true, id: Math.random().toString() }] })),
+      bulkAddPatients: (ps) => set((state) => ({ patients: [...state.patients, ...ps.map(p => ({ ...p, id: generateUUID(), createdAt: new Date().toISOString() }))] })),
+      addUser: (u) => set((state) => ({ users: [...state.users, { ...u, active: true, id: generateUUID() }] })),
       updateUser: (id, data) => set((state) => ({ users: state.users.map(u => u.id === id ? { ...u, ...data } : u) })),
       removeUser: (id) => set((state) => ({ users: state.users.filter(u => u.id !== id) })),
       setCurrentUser: (user) => set({ currentUser: user }),
@@ -358,6 +968,7 @@ export const useStore = create<ClinicState>()(
       renameRepoFile: (id, newName) => set((state) => ({ 
         repoFiles: state.repoFiles.map(f => f.id === id ? { ...f, name: newName } : f) 
       })),
+      
       toggleInsightTask: (insightId, taskId) => set((state) => {
         const updatedInsights = state.insights.map(i => 
           i.id === insightId ? { 
@@ -394,7 +1005,7 @@ export const useStore = create<ClinicState>()(
         if (patientsWithoutReturn.length > 0) {
           const patientNames = patientsWithoutReturn.map(p => p.name).join(', ');
           newInsights.push({
-            id: Math.random().toString(),
+            id: generateUUID(),
             type: 'risco',
             message: `Identificamos que ${patientsWithoutReturn.length} pacientes de alto valor não retornam há mais de 30 dias: ${patientNames}.`,
             actionRequested: 'Reter Pacientes',
@@ -423,7 +1034,7 @@ export const useStore = create<ClinicState>()(
           if (afternoonPrefferedPatients.length > 0) {
             const names = afternoonPrefferedPatients.map(p => p.name).join(', ');
             newInsights.push({
-              id: Math.random().toString(),
+              id: generateUUID(),
               type: 'oportunidade',
               message: `Agenda vaga amanhã das 13h às 18h. Filtramos pacientes que preferem este horário e estão com tratamentos em pausa: ${names}.`,
               actionRequested: 'Preencher Agenda',
@@ -444,7 +1055,7 @@ export const useStore = create<ClinicState>()(
 
         if (tomorrowApptsPending.length > 0) {
           newInsights.push({
-            id: Math.random().toString(),
+            id: generateUUID(),
             type: 'operacional',
             message: `Existem ${tomorrowApptsPending.length} agendamentos para amanhã que ainda não foram confirmados.`,
             actionRequested: 'Confirmar Agenda',

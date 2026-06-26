@@ -30,6 +30,11 @@ export interface Professional {
     start: string; // HH:mm
     end: string;   // HH:mm
   };
+  tipoMembro?: 'clinico' | 'gestao';
+  username?: string;
+  password?: string;
+  allowedTabs?: string[];
+  foto?: string;
 }
 
 export interface Service {
@@ -170,14 +175,18 @@ export interface User {
   email: string;
   role: UserRole;
   active: boolean;
+  allowedTabs?: string[];
+  professionalId?: string;
+  foto?: string;
 }
 
 export interface CRMOpportunity {
   id: string;
   name: string;
   value: number;
-  stage: 'lead' | 'agendado' | 'aguardando' | 'convertido';
-  leadSource: string;
+  stage: 'lead' | 'contatado' | 'agendamento' | 'pós-venda' | string;
+  leadSource?: string;
+  source?: string;
   date: string;
   phone?: string;
   notes?: string;

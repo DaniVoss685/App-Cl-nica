@@ -70,7 +70,10 @@ async function startServer() {
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return res.status(500).json({ error: "Ambiente não configurado para IA." });
+      return res.status(500).json({ 
+        error: "missing_api_key", 
+        message: "Ambiente não configurado para IA. Por favor, adicione GEMINI_API_KEY no arquivo .env" 
+      });
     }
 
     try {
@@ -110,7 +113,11 @@ async function startServer() {
       res.json({ text: response.text() });
     } catch (error: any) {
       console.error("[Jarvis AI] Error:", error);
-      res.status(500).json({ error: "Falha nos sistemas, senhor." });
+      const isAuthError = error.message?.includes("API_KEY") || error.status === 403 || error.status === 400;
+      res.status(500).json({ 
+        error: isAuthError ? "invalid_api_key" : "system_failure", 
+        message: "Falha nos sistemas, senhor." 
+      });
     }
   });
 

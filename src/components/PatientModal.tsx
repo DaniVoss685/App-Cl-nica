@@ -47,11 +47,88 @@ interface PatientModalProps {
   isOpen: boolean;
   onClose: () => void;
   patientId: string | null;
+  onSelectPatient?: (id: string) => void;
 }
 
-export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) {
-  const { patients, appointments, services, professionals, addPatient, updatePatient, removePatient, medicalRecords, addMedicalRecord } = useStore();
+const formatCPF = (value: string) => {
+  const digits = value.replace(/\D/g, '');
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`;
+};
+
+const formatPhone = (value: string) => {
+  const digits = value.replace(/\D/g, '');
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`;
+};
+
+const getFormattedBirthday = (dob: string | undefined) => {
+  if (!dob) return 'Não informado';
+  try {
+    if (dob.includes('-')) {
+      const parts = dob.split('-');
+      if (parts.length === 3) {
+        const day = parseInt(parts[2], 10);
+        const monthIndex = parseInt(parts[1], 10) - 1;
+        const months = [
+          'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+          'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+        ];
+        return `${day} de ${months[monthIndex]}`;
+      }
+    }
+    if (dob.includes('/')) {
+      const parts = dob.split('/');
+      if (parts.length === 3) {
+        const day = parseInt(parts[0], 10);
+        const monthIndex = parseInt(parts[1], 10) - 1;
+        const months = [
+          'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+          'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+        ];
+        return `${day} de ${months[monthIndex]}`;
+      }
+    }
+    return dob;
+  } catch (e) {
+    return dob;
+  }
+};
+
+const referralOptions = [
+  { value: 'Google Search', label: 'Pesquisa no Google', icon: '🔍' },
+  { value: 'Instagram', label: 'Instagram / Redes', icon: '📸' },
+  { value: 'Facebook', label: 'Facebook', icon: '👥' },
+  { value: 'TikTok', label: 'TikTok', icon: '📹' },
+  { value: 'Indicação', label: 'Indicação (Amigo/Família)', icon: '🙋‍♂️' },
+  { value: 'Indicação Médica', label: 'Indicação Profissional', icon: '🩺' },
+  { value: 'Fachada', label: 'Vi a Fachada', icon: '🏥' },
+  { value: 'Outros', label: 'Outros meios', icon: '✨' },
+];
+
+export function PatientModal({ isOpen, onClose, patientId, onSelectPatient }: PatientModalProps) {
+  const { patients, appointments, services, professionals, addPatient, updatePatient, removePatient, medicalRecords, addMedicalRecord, finance, budgets } = useStore();
   const patient = patients.find(p => p.id === patientId);
+  
+  // Cálculos dinâmicos e reais do paciente para evitar dados mocados
+  const patientFinance = patient ? finance.filter(f => f.patientId === patient.id && f.type === 'receita') : [];
+  const totalPaid = patientFinance.filter(f => f.status === 'pago').reduce((sum, f) => sum + f.amount, 0);
+  const totalUnpaid = patientFinance.filter(f => f.status === 'pendente').reduce((sum, f) => sum + f.amount, 0);
+  const paidTransactionsCount = patientFinance.filter(f => f.status === 'pago').length;
+  const ticketMedio = paidTransactionsCount > 0 ? totalPaid / paidTransactionsCount : 0;
+  const activePackagesCount = patient ? budgets.filter(b => b.patientId === patient.id && b.status === 'Aprovado').length : 0;
+
+  const getRetentionTier = (total: number) => {
+    if (total >= 2000) return 'Gold';
+    if (total >= 500) return 'Silver';
+    if (total > 0) return 'Bronze';
+    return 'Novo';
+  };
+  const retentionTier = getRetentionTier(totalPaid);
   
   const [newPatientData, setNewPatientData] = useState({
     name: '',
@@ -62,7 +139,8 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
     referralMethod: '',
     referredBy: '',
     status: 'novo' as const,
-    profilePicture: ''
+    profilePicture: '',
+    observations: ''
   });
 
   const [editPatientData, setEditPatientData] = useState({
@@ -74,24 +152,30 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
     referralMethod: '',
     referredBy: '',
     status: 'novo' as const,
-    profilePicture: ''
+    profilePicture: '',
+    observations: ''
   });
 
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [savedPatientName, setSavedPatientName] = useState('');
+  const [savedPatientId, setSavedPatientId] = useState('');
+  const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
     if (isOpen && patient) {
       setEditPatientData({
         name: patient.name || '',
-        phone: patient.phone || '',
+        phone: formatPhone(patient.phone || ''),
         email: patient.email || '',
-        cpf: patient.cpf || '',
+        cpf: formatCPF(patient.cpf || ''),
         dateOfBirth: patient.dateOfBirth || '',
         referralMethod: patient.referralMethod || '',
         referredBy: patient.referredBy || '',
         status: (patient.status?.toLowerCase() || 'novo') as any,
-        profilePicture: patient.profilePicture || ''
+        profilePicture: patient.profilePicture || '',
+        observations: patient.observations || ''
       });
       setIsConfirmingDelete(false);
       setSaveSuccess(false);
@@ -106,11 +190,13 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
   };
 
   const [currentStep, setCurrentStep] = useState(1);
+  const isNewPatientStep1Invalid = !newPatientData.name || !newPatientData.phone || !newPatientData.cpf || !newPatientData.dateOfBirth;
 
   // Reset step and data on opening the modal
   useEffect(() => {
     if (isOpen) {
       setCurrentStep(1);
+      setActiveTab('overview');
       if (!patientId) {
         setNewPatientData({
           name: '',
@@ -121,7 +207,8 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
           referralMethod: '',
           referredBy: '',
           status: 'novo',
-          profilePicture: ''
+          profilePicture: '',
+          observations: ''
         });
       }
     }
@@ -196,8 +283,12 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
   };
 
   const handleSaveNew = () => {
-    if (!newPatientData.name) return;
-    addPatient(newPatientData);
+    if (isNewPatientStep1Invalid) return;
+    const generatedId = Math.random().toString();
+    addPatient({ ...newPatientData, id: generatedId });
+    setSavedPatientId(generatedId);
+    setSavedPatientName(newPatientData.name);
+    setShowSuccessModal(true);
     setNewPatientData({
       name: '',
       phone: '',
@@ -207,9 +298,9 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
       referralMethod: '',
       referredBy: '',
       status: 'novo',
-      profilePicture: ''
+      profilePicture: '',
+      observations: ''
     });
-    onClose();
   };
 
   const handleAddInteraction = () => {
@@ -260,28 +351,44 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
         {isNew ? (
           <div className="flex flex-col h-full bg-white p-6 md:p-12 overflow-y-auto no-scrollbar">
             <div className="max-w-md mx-auto w-full space-y-8">
-              <div className="text-center">
-                <div className="w-20 h-20 bg-indigo-50 rounded-[2rem] flex items-center justify-center mx-auto mb-4 relative overflow-hidden group shrink-0 border border-slate-100 shadow-inner">
-                  {newPatientData.profilePicture ? (
-                    <img 
-                      src={newPatientData.profilePicture} 
-                      alt="Novo Paciente" 
-                      className="w-full h-full object-cover rounded-[2rem]" 
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <User className="w-10 h-10 text-indigo-600" />
-                  )}
-                  <label className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer">
-                    <Camera className="w-5 h-5 text-white animate-in zoom-in-50 duration-205" />
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      className="hidden" 
-                      onChange={handleNewProfilePictureUpload} 
-                    />
+              <div className="text-center flex flex-col items-center">
+                <div className="relative w-20 h-20 mx-auto mb-3">
+                  <div className="w-20 h-20 bg-indigo-50 rounded-[2rem] flex items-center justify-center overflow-hidden group shrink-0 border border-slate-100 shadow-inner">
+                    {newPatientData.profilePicture ? (
+                      <img 
+                        src={newPatientData.profilePicture} 
+                        alt="Novo Paciente" 
+                        className="w-full h-full object-cover rounded-[2rem]" 
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <User className="w-10 h-10 text-indigo-600" />
+                    )}
+                    <label className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer">
+                      <Camera className="w-5 h-5 text-white animate-in zoom-in-50 duration-205" />
+                      <input 
+                        id="new-patient-avatar-input"
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={handleNewProfilePictureUpload} 
+                      />
+                    </label>
+                  </div>
+                  <label 
+                    htmlFor="new-patient-avatar-input" 
+                    className="absolute -bottom-1 -right-1 w-7 h-7 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl flex items-center justify-center cursor-pointer shadow-lg border-2 border-white transition-colors animate-in zoom-in-50"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
                   </label>
                 </div>
+                <label 
+                  htmlFor="new-patient-avatar-input" 
+                  className="inline-block text-xs font-bold text-indigo-600 hover:text-indigo-700 hover:underline cursor-pointer transition-colors mb-4"
+                >
+                  {newPatientData.profilePicture ? 'Alterar foto de perfil' : 'Adicionar foto de perfil'}
+                </label>
+
                 <h1 className="text-3xl font-black italic text-slate-900">Novo Paciente</h1>
                 <p className="text-slate-500 font-medium mt-2">Cadastre um novo paciente no sistema para iniciar a gestão.</p>
               </div>
@@ -305,11 +412,11 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                 <button 
                   type="button"
                   onClick={() => {
-                    if (newPatientData.name) {
+                    if (!isNewPatientStep1Invalid) {
                       setCurrentStep(2);
                     }
                   }}
-                  disabled={!newPatientData.name}
+                  disabled={isNewPatientStep1Invalid}
                   className={cn(
                     "px-4 py-2 rounded-xl text-xs font-black italic uppercase transition-all flex items-center gap-1.5 disabled:opacity-40",
                     currentStep === 2 
@@ -341,17 +448,17 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                         className="w-full h-14 bg-slate-50 border-none rounded-2xl px-6 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-505 transition-all focus:outline-none"
                         placeholder="(00) 00000-0000"
                         value={newPatientData.phone}
-                        onChange={e => setNewPatientData({...newPatientData, phone: e.target.value})}
+                        onChange={e => setNewPatientData({...newPatientData, phone: formatPhone(e.target.value)})}
                         required
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">CPF do Paciente</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">CPF do Paciente *</label>
                       <input 
                         className="w-full h-14 bg-slate-50 border-none rounded-2xl px-6 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-505 transition-all focus:outline-none"
                         placeholder="000.000.000-00"
                         value={newPatientData.cpf}
-                        onChange={e => setNewPatientData({...newPatientData, cpf: e.target.value})}
+                        onChange={e => setNewPatientData({...newPatientData, cpf: formatCPF(e.target.value)})}
                       />
                     </div>
                   </div>
@@ -366,7 +473,7 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Data de Nascimento</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Data de Nascimento *</label>
                       <input 
                         type="date"
                         className="w-full h-14 bg-slate-50 border-none rounded-2xl px-6 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-505 transition-all focus:outline-none"
@@ -378,23 +485,40 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                 </div>
               ) : (
                 <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-200">
+                  {/* Lembrete de Origem */}
+                  <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 flex items-start gap-2.5 text-left">
+                    <span className="text-base">💡</span>
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-black text-indigo-900 italic uppercase">Lembrete Comercial</p>
+                      <p className="text-[11px] text-indigo-700 font-bold leading-normal">
+                        Pergunte ao paciente como ele conheceu a clínica e quem o indicou. Estes campos <strong>não são obrigatórios</strong>, mas nos ajudam a mensurar nossas campanhas.
+                      </p>
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Origem (Como nos Conheceu?)</label>
-                    <select 
-                      className="w-full h-14 bg-slate-50 border-none rounded-2xl px-6 font-bold text-slate-900 focus:ring-2 focus:ring-indigo-505 transition-all focus:outline-none cursor-pointer"
-                      value={newPatientData.referralMethod}
-                      onChange={e => setNewPatientData({...newPatientData, referralMethod: e.target.value})}
-                    >
-                      <option value="">Selecione a origem...</option>
-                      <option value="Google Search">🔍 Pesquisa no Google</option>
-                      <option value="Instagram">📸 Instagram / Redes Sociais</option>
-                      <option value="Facebook">👥 Facebook</option>
-                      <option value="TikTok">📹 TikTok</option>
-                      <option value="Indicação">🙋‍♂️ Indicação de Amigo ou Familiar</option>
-                      <option value="Indicação Médica">🩺 Indicação de outro profissional</option>
-                      <option value="Fachada">🏥 Vi a Fachada / Passei em frente</option>
-                      <option value="Outros">✨ Outros meios</option>
-                    </select>
+                    <div className="grid grid-cols-2 gap-3">
+                      {referralOptions.map((opt) => {
+                        const isSelected = newPatientData.referralMethod === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setNewPatientData({ ...newPatientData, referralMethod: opt.value })}
+                            className={cn(
+                              "flex items-center gap-3 p-4 rounded-2xl border text-left transition-all duration-200 cursor-pointer w-full h-14",
+                              isSelected 
+                                ? "bg-indigo-50/60 border-indigo-500 text-indigo-900 shadow-sm ring-1 ring-indigo-500" 
+                                : "bg-slate-50 border-transparent text-slate-700 hover:bg-slate-100 hover:border-slate-200"
+                            )}
+                          >
+                            <span className="text-xl shrink-0">{opt.icon}</span>
+                            <span className="text-[11px] font-bold leading-tight">{opt.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <div className="space-y-2">
@@ -405,9 +529,16 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                       value={newPatientData.referredBy}
                       onChange={e => setNewPatientData({...newPatientData, referredBy: e.target.value})}
                     />
-                    <p className="text-[10px] text-slate-400 font-medium italic pl-1">
-                      Identificar a origem do paciente nos ajuda a otimizar as campanhas de marketing e parcerias da Stark Clinic.
-                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Alertas Clínicos / Observações</label>
+                    <Textarea 
+                      className="w-full min-h-[80px] bg-slate-50 border-none rounded-2xl px-6 py-3 font-medium text-slate-900 focus:ring-2 focus:ring-indigo-505 transition-all focus:outline-none resize-none"
+                      placeholder="Ex: Alergias, restrições médicas, sensibilidade ocular..."
+                      value={newPatientData.observations || ''}
+                      onChange={e => setNewPatientData({...newPatientData, observations: e.target.value})}
+                    />
                   </div>
                 </div>
               )}
@@ -434,20 +565,20 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                 {currentStep === 1 ? (
                   <Button 
                     onClick={() => {
-                      if (newPatientData.name) {
+                      if (!isNewPatientStep1Invalid) {
                         setCurrentStep(2);
                       }
                     }}
-                    disabled={!newPatientData.name}
-                    className="flex-1 h-14 bg-indigo-650 hover:bg-indigo-700 text-white rounded-2xl font-black italic shadow-xl shadow-indigo-100 disabled:opacity-40"
+                    disabled={isNewPatientStep1Invalid}
+                    className="flex-1 h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black italic shadow-xl shadow-indigo-100/50 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none disabled:opacity-100 transition-all cursor-pointer"
                   >
                     Avançar
                   </Button>
                 ) : (
                   <Button 
                     onClick={handleSaveNew}
-                    disabled={!newPatientData.name}
-                    className="flex-1 h-14 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black italic shadow-xl shadow-emerald-50"
+                    disabled={isNewPatientStep1Invalid}
+                    className="flex-1 h-14 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black italic shadow-xl shadow-emerald-100/50 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none disabled:opacity-100 transition-all cursor-pointer"
                   >
                     Concluir & Salvar
                   </Button>
@@ -529,19 +660,31 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                     </div>
                     <div className="flex justify-between items-center text-xs">
                       <span className="text-slate-400 font-bold uppercase">Origem</span>
-                      <span className="font-bold text-slate-600 italic">Indicação (Amigo)</span>
+                      <span className="font-bold text-slate-600 italic">
+                        {referralOptions.find(o => o.value === patient.referralMethod)?.label || patient.referralMethod || 'Não informado'}
+                      </span>
                     </div>
                     <div className="flex justify-between items-center text-xs">
                       <span className="text-slate-400 font-bold uppercase">Ticket Médio</span>
-                      <span className="font-black italic text-slate-900">R$ 450,00</span>
+                      <span className="font-black italic text-slate-900">
+                        R$ {ticketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
                     </div>
                     <div className="flex justify-between items-center text-xs">
                       <span className="text-slate-400 font-bold uppercase">Aniversário</span>
-                      <span className="font-bold text-slate-600 italic">12 de Outubro</span>
+                      <span className="font-bold text-slate-600 italic">{getFormattedBirthday(patient.dateOfBirth)}</span>
                     </div>
                     <div className="flex justify-between items-center text-xs">
                       <span className="text-slate-400 font-bold uppercase">Retenção</span>
-                      <Badge className="bg-indigo-100 text-indigo-700 border-none font-bold text-[10px] px-2 uppercase">Gold</Badge>
+                      <Badge className={cn(
+                        "border-none font-bold text-[10px] px-2 uppercase",
+                        retentionTier === 'Gold' && "bg-amber-100 text-amber-800",
+                        retentionTier === 'Silver' && "bg-slate-100 text-slate-700",
+                        retentionTier === 'Bronze' && "bg-orange-100 text-orange-800",
+                        retentionTier === 'Novo' && "bg-indigo-50 text-indigo-700"
+                      )}>
+                        {retentionTier}
+                      </Badge>
                     </div>
                   </div>
                 </div>
@@ -553,17 +696,27 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                     <Badge variant="outline" className="text-[9px] border-slate-200 text-slate-400">Puntual</Badge>
                     <Badge variant="outline" className="text-[9px] border-slate-200 text-slate-400">Harmonização</Badge>
                   </div>
+                  
+                  <Button 
+                    onClick={() => setActiveTab('settings')}
+                    variant="outline"
+                    className="w-full mt-4 border-slate-200 text-slate-500 hover:text-indigo-600 hover:border-indigo-200 rounded-xl h-9 text-[10px] font-black uppercase tracking-wider italic transition-all flex items-center justify-center gap-1.5 cursor-pointer bg-white"
+                  >
+                    ✏️ Editar Cadastro
+                  </Button>
                 </div>
 
-                <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100">
-                  <div className="flex items-center gap-2 mb-1">
-                    <ShieldAlert className="w-4 h-4 text-amber-600" />
-                    <p className="text-[10px] font-black text-amber-800 italic uppercase">Alertas Clínicos</p>
+                {patient.observations && patient.observations.trim() && (
+                  <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100">
+                    <div className="flex items-center gap-2 mb-1">
+                      <ShieldAlert className="w-4 h-4 text-amber-600" />
+                      <p className="text-[10px] font-black text-amber-800 italic uppercase">Alertas Clínicos</p>
+                    </div>
+                    <p className="text-[11px] text-amber-700 font-bold leading-relaxed whitespace-pre-wrap">
+                      {patient.observations}
+                    </p>
                   </div>
-                  <p className="text-[11px] text-amber-700 font-bold leading-relaxed">
-                    Alergia a peeling químico de ácido salicílico. Sensibilidade na região periorbital.
-                  </p>
-                </div>
+                )}
               </div>
 
               <Button 
@@ -636,7 +789,7 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                 </div>
               </DialogHeader>
 
-              <Tabs defaultValue="overview" className="flex-1 flex flex-col overflow-hidden">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
                 <div className="px-8 bg-slate-50/50 border-b border-slate-100 flex justify-between items-center shrink-0">
                   <TabsList className="h-16 bg-transparent gap-2 p-1">
                     {[
@@ -704,11 +857,11 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                         <div className="grid grid-cols-2 gap-4">
                           <div className="p-4 bg-emerald-50 rounded-2xl">
                             <p className="text-[10px] font-black text-emerald-600 mb-1 uppercase">Total Pago</p>
-                            <p className="text-xl font-black text-emerald-700 italic">R$ 12.450,00</p>
+                            <p className="text-xl font-black text-emerald-700 italic">R$ {totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                           </div>
                           <div className="p-4 bg-amber-50 rounded-2xl">
                             <p className="text-[10px] font-black text-amber-600 mb-1 uppercase">Débito Aberto</p>
-                            <p className="text-xl font-black text-amber-700 italic">R$ 320,00</p>
+                            <p className="text-xl font-black text-amber-700 italic">R$ {totalUnpaid.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                           </div>
                         </div>
                         <div className="mt-6 p-4 border-2 border-dashed border-slate-100 rounded-2xl flex items-center justify-between">
@@ -716,7 +869,7 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                             <Badge className="bg-indigo-600 text-white rounded-full p-1"><Package className="w-3 h-3" /></Badge>
                             <span className="text-xs font-bold text-slate-600 uppercase">Pacotes Ativos</span>
                           </div>
-                          <span className="text-sm font-black italic">02</span>
+                          <span className="text-sm font-black italic">{activePackagesCount.toString().padStart(2, '0')}</span>
                         </div>
                       </Card>
                     </div>
@@ -784,23 +937,61 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                           Lançar Pagamento
                         </Button>
                       </div>
-                      {[1, 2, 3].map(i => (
-                        <div key={i} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between hover:border-emerald-200 transition-all group">
-                          <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:bg-emerald-50 group-hover:text-emerald-500 transition-colors">
-                              <CheckCircle2 className="w-6 h-6" />
-                            </div>
-                            <div>
-                              <p className="text-sm font-black text-slate-900 italic capitalize">Sessão {i} - Protocolo Facial</p>
-                              <p className="text-[10px] text-slate-400 font-mono tracking-widest uppercase">Pagamento via PIX • ID: 9482{i}</p>
-                            </div>
+
+                      {patientFinance.length === 0 ? (
+                        <div className="py-20 text-center space-y-6 bg-white rounded-[2rem] border border-slate-100 shadow-sm">
+                          <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto text-slate-400">
+                            <DollarSign className="w-10 h-10 text-slate-300" />
                           </div>
-                          <div className="text-right">
-                            <p className="text-sm font-black text-slate-900 italic">R$ 250,00</p>
-                            <p className="text-[10px] text-slate-500 font-bold italic uppercase">15/05/2026</p>
+                          <div>
+                            <h3 className="text-base font-black text-slate-900 italic">Nenhum registro financeiro</h3>
+                            <p className="text-slate-400 text-xs max-w-xs mx-auto mt-1 font-medium leading-relaxed">
+                              Não há nenhuma cobrança registrada para este paciente ainda.
+                            </p>
                           </div>
                         </div>
-                      ))}
+                      ) : (
+                        <div className="space-y-3">
+                          {patientFinance.map(trans => (
+                            <div key={trans.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between hover:border-emerald-200 transition-all group shadow-sm">
+                              <div className="flex items-center gap-4">
+                                <div className={cn(
+                                  "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                                  trans.status === 'pago' ? "bg-emerald-50 text-emerald-500" : "bg-amber-50 text-amber-500"
+                                )}>
+                                  <CheckCircle2 className="w-6 h-6" />
+                                </div>
+                                <div>
+                                  <p className="text-sm font-black text-slate-900 italic capitalize">
+                                    {trans.description || trans.category || 'Cobrança'}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400 font-mono tracking-widest uppercase">
+                                    {trans.paymentMethod ? `Pagamento via ${trans.paymentMethod}` : 'Método não informado'} • ID: {trans.id.slice(0, 8)}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-sm font-black text-slate-900 italic">
+                                  R$ {trans.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </p>
+                                <div className="flex items-center gap-2.5 justify-end mt-0.5">
+                                  <span className={cn(
+                                    "text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider",
+                                    trans.status === 'pago' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                                  )}>
+                                    {trans.status}
+                                  </span>
+                                  <p className="text-[10px] text-slate-500 font-bold italic uppercase">
+                                    {trans.paymentDate 
+                                      ? format(new Date(trans.paymentDate + 'T12:00:00'), 'dd/MM/yyyy') 
+                                      : format(new Date(trans.dueDate + 'T12:00:00'), 'dd/MM/yyyy')}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </TabsContent>
 
@@ -844,7 +1035,7 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                             <input 
                               className="w-full h-12 bg-slate-50 border-none rounded-xl px-4 font-bold text-slate-800 focus:ring-2 focus:ring-indigo-505 focus:outline-none"
                               value={editPatientData.phone}
-                              onChange={e => setEditPatientData({...editPatientData, phone: e.target.value})}
+                              onChange={e => setEditPatientData({...editPatientData, phone: formatPhone(e.target.value)})}
                             />
                           </div>
                         </div>
@@ -864,7 +1055,7 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                             <input 
                               className="w-full h-12 bg-slate-50 border-none rounded-xl px-4 font-bold text-slate-800 focus:ring-2 focus:ring-indigo-505 focus:outline-none"
                               value={editPatientData.cpf}
-                              onChange={e => setEditPatientData({...editPatientData, cpf: e.target.value})}
+                              onChange={e => setEditPatientData({...editPatientData, cpf: formatCPF(e.target.value)})}
                             />
                           </div>
                         </div>
@@ -882,41 +1073,48 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
 
                           <div className="space-y-2">
                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Status de Tratamento</label>
-                            <select 
-                              className="w-full h-12 bg-slate-50 border-none rounded-xl px-4 font-bold text-slate-800 focus:ring-2 focus:ring-indigo-505 focus:outline-none cursor-pointer capitalize"
-                              value={editPatientData.status}
-                              onChange={e => setEditPatientData({...editPatientData, status: e.target.value as any})}
+                            <Select 
+                              value={editPatientData.status} 
+                              onValueChange={(v: any) => setEditPatientData({...editPatientData, status: v})}
                             >
-                              <option value="novo">Novo</option>
-                              <option value="em tratamento">Em Tratamento</option>
-                              <option value="em acompanhamento">Em Acompanhamento</option>
-                              <option value="inativo">Inativo</option>
-                              <option value="finalizado">Finalizado</option>
-                              <option value="em atraso">Em Atraso</option>
-                            </select>
+                              <SelectTrigger className="w-full h-12 bg-slate-50 border-none rounded-xl px-4 font-bold text-slate-800 focus:ring-2 focus:ring-indigo-505 focus:outline-none cursor-pointer capitalize">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="novo" className="font-bold capitalize">Novo</SelectItem>
+                                <SelectItem value="em tratamento" className="font-bold capitalize">Em Tratamento</SelectItem>
+                                <SelectItem value="em acompanhamento" className="font-bold capitalize">Em Acompanhamento</SelectItem>
+                                <SelectItem value="inativo" className="font-bold capitalize">Inativo</SelectItem>
+                                <SelectItem value="finalizado" className="font-bold capitalize">Finalizado</SelectItem>
+                                <SelectItem value="em atraso" className="font-bold capitalize">Em Atraso</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Origem do Paciente</label>
-                            <select 
-                              className="w-full h-12 bg-slate-50 border-none rounded-xl px-4 font-bold text-slate-800 focus:ring-2 focus:ring-indigo-505 focus:outline-none cursor-pointer"
-                              value={editPatientData.referralMethod}
-                              onChange={e => setEditPatientData({...editPatientData, referralMethod: e.target.value})}
+                            <Select 
+                              value={editPatientData.referralMethod || "none"} 
+                              onValueChange={(v: any) => setEditPatientData({...editPatientData, referralMethod: v === "none" ? "" : v})}
                             >
-                              <option value="">Selecione...</option>
-                              <option value="Google Search">🔍 Pesquisa no Google</option>
-                              <option value="Instagram">📸 Instagram / Redes Sociais</option>
-                              <option value="Facebook">👥 Facebook</option>
-                              <option value="TikTok">📹 TikTok</option>
-                              <option value="Indicação">🙋‍♂️ Indicação de Amigo ou Familiar</option>
-                              <option value="Indicação Médica">🩺 Indicação de outro profissional</option>
-                              <option value="Fachada">🏥 Vi a Fachada / Passei em frente</option>
-                              <option value="Outros">✨ Outros meios</option>
-                            </select>
+                              <SelectTrigger className="w-full h-12 bg-slate-50 border-none rounded-xl px-4 font-bold text-slate-800 focus:ring-2 focus:ring-indigo-505 focus:outline-none cursor-pointer">
+                                <SelectValue placeholder="Selecione..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none" className="font-bold">Selecione...</SelectItem>
+                                <SelectItem value="Google Search" className="font-bold">🔍 Pesquisa no Google</SelectItem>
+                                <SelectItem value="Instagram" className="font-bold">📸 Instagram / Redes Sociais</SelectItem>
+                                <SelectItem value="Facebook" className="font-bold">👥 Facebook</SelectItem>
+                                <SelectItem value="TikTok" className="font-bold">📹 TikTok</SelectItem>
+                                <SelectItem value="Indicação" className="font-bold">🙋‍♂️ Indicação de Amigo ou Familiar</SelectItem>
+                                <SelectItem value="Indicação Médica" className="font-bold">🩺 Indicação de outro profissional</SelectItem>
+                                <SelectItem value="Fachada" className="font-bold">🏥 Vi a Fachada / Passei em frente</SelectItem>
+                                <SelectItem value="Outros" className="font-bold">✨ Outros meios</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
-
                           <div className="space-y-2">
                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Quem Indicou / Detalhes</label>
                             <input 
@@ -926,6 +1124,16 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                               placeholder="Juliana, João"
                             />
                           </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Alertas Clínicos / Observações</label>
+                          <Textarea 
+                            className="w-full min-h-[80px] bg-slate-50 border-none rounded-xl px-4 py-3 font-medium text-slate-800 focus:ring-2 focus:ring-indigo-505 focus:outline-none resize-none"
+                            value={editPatientData.observations || ''}
+                            onChange={e => setEditPatientData({...editPatientData, observations: e.target.value})}
+                            placeholder="Ex: Alergias, restrições médicas, observações clínicas..."
+                          />
                         </div>
 
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-slate-105">
@@ -1052,7 +1260,7 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none" className="font-bold italic">Selecione...</SelectItem>
-                  {professionals.map(p => <SelectItem key={p.id} value={p.id} className="font-bold italic">{p.name}</SelectItem>)}
+                  {professionals.filter(p => p.tipoMembro !== 'gestao').map(p => <SelectItem key={p.id} value={p.id} className="font-bold italic">{p.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -1073,6 +1281,46 @@ export function PatientModal({ isOpen, onClose, patientId }: PatientModalProps) 
               className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 text-white font-black italic rounded-2xl shadow-xl shadow-indigo-100 mt-4 uppercase"
             >
               Salvar Evolução
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Success Modal */}
+      <Dialog open={showSuccessModal} onOpenChange={setShowSuccessModal}>
+        <DialogContent className="max-w-md bg-white rounded-[2.5rem] p-8 border-none shadow-2xl overflow-hidden text-center flex flex-col items-center animate-in zoom-in-95 duration-200">
+          <div className="w-20 h-20 bg-emerald-50 rounded-[2rem] flex items-center justify-center text-emerald-600 mb-6 shadow-inner animate-bounce">
+            <CheckCircle2 className="w-10 h-10" />
+          </div>
+          <h3 className="text-2xl font-black text-slate-900 italic mb-2 tracking-tight">
+            Cadastro Concluído!
+          </h3>
+          <p className="text-slate-500 text-sm leading-relaxed mb-8">
+            O prontuário digital do paciente <strong className="text-slate-900 capitalize font-extrabold">{savedPatientName}</strong> foi criado com sucesso no sistema.
+          </p>
+          <div className="flex flex-col gap-3 w-full">
+            <Button 
+              onClick={() => {
+                setShowSuccessModal(false);
+                if (onSelectPatient) {
+                  onSelectPatient(savedPatientId);
+                } else {
+                  onClose();
+                }
+              }}
+              className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 text-white font-black italic rounded-2xl shadow-xl shadow-indigo-100/50 uppercase transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              Ver Prontuário
+            </Button>
+            <Button 
+              variant="ghost"
+              onClick={() => {
+                setShowSuccessModal(false);
+                onClose();
+              }}
+              className="w-full h-14 rounded-2xl font-bold text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-all cursor-pointer"
+            >
+              Fechar
             </Button>
           </div>
         </DialogContent>

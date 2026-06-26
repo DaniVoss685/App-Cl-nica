@@ -93,15 +93,31 @@ export function Sidebar() {
   const [isManual, setIsManual] = useState(false);
   const timeoutRef = useRef<any>(null);
 
-    const filteredPrincipal = principalNavigation.filter(item => {
-    if (currentUser?.role === 'recepção' && item.name === 'Financeiro') return false;
+  const checkPermission = (itemName: string) => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'admin') return true;
+    
+    const normalizedName = itemName.toLowerCase().trim();
+    
+    if (currentUser.allowedTabs && currentUser.allowedTabs.length > 0) {
+      return currentUser.allowedTabs.some(tab => {
+        const normalizedTab = tab.toLowerCase().trim();
+        return normalizedTab === normalizedName || 
+               normalizedName.includes(normalizedTab) || 
+               normalizedTab.includes(normalizedName);
+      });
+    }
+    
+    // Fallback padrão se não houver permissões personalizadas
+    if (currentUser.role === 'recepção') {
+      if (itemName === 'Financeiro' || itemName === 'Relatórios' || itemName === 'Configurações') return false;
+    }
     return true;
-  });
+  };
 
-  const filteredGestao = gestaoNavigation.filter(item => {
-    if (currentUser?.role === 'recepção' && (item.name === 'Relatórios' || item.name === 'Configurações')) return false;
-    return true;
-  });
+  const filteredPrincipal = principalNavigation.filter(item => checkPermission(item.name));
+  const filteredOperacao = operacaoNavigation.filter(item => checkPermission(item.name));
+  const filteredGestao = gestaoNavigation.filter(item => checkPermission(item.name));
 
   const startTimer = () => {
     if (isManual || isCollapsed) return;
@@ -167,7 +183,7 @@ export function Sidebar() {
         
         <div className="space-y-1">
           {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Operação</div>}
-          {operacaoNavigation.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} />)}
+          {filteredOperacao.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} />)}
         </div>
         
         <div className="space-y-1">

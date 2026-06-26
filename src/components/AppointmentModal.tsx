@@ -511,7 +511,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="z-[5000]">
-                          {professionals.map(p => <SelectItem key={p.id} value={p.id} className="font-bold">{p.name}</SelectItem>)}
+                          {professionals.filter(p => p.tipoMembro !== 'gestao').map(p => <SelectItem key={p.id} value={p.id} className="font-bold">{p.name}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>

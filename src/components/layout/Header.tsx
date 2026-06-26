@@ -1,4 +1,4 @@
-import { Bell, Menu, Search, Upload, HelpCircle } from 'lucide-react';
+import { Bell, Menu, Search, Upload, HelpCircle, LogOut } from 'lucide-react';
 import { useStore } from '../../store';
 import { useRef } from 'react';
 
@@ -7,6 +7,9 @@ export function Header() {
   const insights = useStore(state => state.insights);
   const profilePicture = useStore(state => state.profilePicture);
   const setProfilePicture = useStore(state => state.setProfilePicture);
+  const currentClient = useStore(state => state.currentClient);
+  const currentUser = useStore(state => state.currentUser);
+  const logoutClient = useStore(state => state.logoutClient);
   const unresolvedInsights = insights.filter(i => !i.resolved).length;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -27,8 +30,9 @@ export function Header() {
         <button className="sm:hidden text-slate-500 hover:text-slate-700">
           <Menu className="h-6 w-6" />
         </button>
-        <h1 className="text-xl font-bold text-slate-800 hidden sm:block">visão geral: <span className="text-indigo-600 font-semibold">{clinicName || 'clínica lumiere'}</span></h1>
-        <div className="px-3 py-1 bg-green-50 text-green-700 text-xs rounded-full border border-green-100 font-medium hidden md:block lowercase">caixa aberto</div>
+        <h1 className="text-xl font-black text-slate-800 hidden sm:block italic uppercase tracking-tight">
+          Seja bem-vindo de volta{currentUser?.name || currentClient?.name ? `, ${currentUser?.name || currentClient?.name}` : ''}
+        </h1>
       </div>
       
       <div className="flex items-center gap-4">
@@ -64,10 +68,10 @@ export function Header() {
           onClick={() => fileInputRef.current?.click()}
           title="Alterar foto de perfil"
         >
-          {profilePicture ? (
-            <img src={profilePicture} alt="Profile" className="w-full h-full object-cover" />
+          {profilePicture || currentUser?.foto ? (
+            <img src={profilePicture || currentUser?.foto} alt="Profile" className="w-full h-full object-cover" />
           ) : (
-            'ad'
+            (currentUser?.name || currentClient?.name)?.substring(0, 2).toLowerCase() || 'ad'
           )}
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
             <Upload className="w-4 h-4 text-white" />
@@ -80,6 +84,19 @@ export function Header() {
           accept="image/*"
           onChange={handleImageUpload}
         />
+
+        {currentClient && (
+          <button 
+            onClick={() => {
+              logoutClient();
+              window.location.href = "/";
+            }}
+            className="p-2 text-slate-400 hover:text-red-500 rounded-full hover:bg-slate-50 transition-colors cursor-pointer"
+            title="Sair do Sistema"
+          >
+            <LogOut className="h-5 w-5" />
+          </button>
+        )}
       </div>
     </header>
   );

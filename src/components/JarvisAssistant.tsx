@@ -81,7 +81,7 @@ export const JarvisAssistant: React.FC = () => {
             console.log('Jarvis Final Result:', transcriptPart);
             
             // Wake word check - much more permissive
-            if (!showInterface && (transcriptPart.includes('jarvis') || transcriptPart.includes('jávis') || transcriptPart.includes('javes'))) {
+            if (!showInterface && (transcriptPart.includes('jarvis') || transcriptPart.includes('jávis') || transcriptPart.includes('javes') || transcriptPart.includes('ok jarvis') || transcriptPart.includes('ok, jarvis') || transcriptPart.includes('ok jávis'))) {
               console.log('Jarvis activated via wake word');
               activateJarvis();
               return;
@@ -244,15 +244,29 @@ export const JarvisAssistant: React.FC = () => {
         })
       });
 
-      if (!res.ok) throw new Error('Falha no núcleo.');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        if (errorData.error === "missing_api_key") {
+          throw new Error("missing_api_key");
+        }
+        if (errorData.error === "invalid_api_key") {
+          throw new Error("invalid_api_key");
+        }
+        throw new Error('Falha no núcleo.');
+      }
       
       const data = await res.json();
       const aiResponse = data.text || "Senhor, os dados parecem inconsistentes. Não consegui uma resposta.";
       
       setResponse(aiResponse);
       speak(aiResponse);
-    } catch (error) {
-      const msg = "Senhor, perdi a conexão com os servidores centrais da Stark Industries.";
+    } catch (error: any) {
+      let msg = "Senhor, perdi a conexão com os servidores centrais da Stark Industries.";
+      if (error.message === "missing_api_key") {
+        msg = "Senhor, a inteligência do Jarvis necessita de uma chave de API do Gemini configurada em nosso arquivo .env. Por favor, insira-a para ativarmos todos os protocolos de inteligência.";
+      } else if (error.message === "invalid_api_key") {
+        msg = "Senhor, a chave de API do Gemini configurada em nosso arquivo .env parece ser inválida. Por favor, verifique-a.";
+      }
       setResponse(msg);
       speak(msg);
     } finally {
@@ -270,29 +284,7 @@ export const JarvisAssistant: React.FC = () => {
 
   return (
     <>
-      {/* Invisible listener indicator */}
-      <AnimatePresence>
-        {!showInterface && !permissionError && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="fixed bottom-6 right-6 z-[100]"
-          >
-            <div className="relative group">
-              <div className="absolute inset-0 bg-cyan-400 rounded-full animate-ping opacity-20"></div>
-              <button 
-                onClick={activateJarvis}
-                className="relative bg-slate-900 border border-cyan-400/40 p-4 rounded-full shadow-[0_0_25px_rgba(34,211,238,0.3)] text-cyan-400 hover:text-white transition-all hover:scale-110 active:scale-95"
-              >
-                <Cpu className="w-6 h-6" />
-                <span className="absolute -top-10 right-0 bg-slate-900 text-[10px] px-2 py-1 rounded border border-cyan-400/30 opacity-0 group-hover:opacity-100 transition-opacity font-mono text-cyan-400 whitespace-nowrap">
-                  PROTOCOL JARVIS ACTIVE
-                </span>
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Invisible listener indicator (floating button removed - voice only) */}
 
       <AnimatePresence>
         {showInterface && (

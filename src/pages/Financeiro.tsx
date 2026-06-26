@@ -62,7 +62,7 @@ import {
 import { toast } from 'sonner';
 
 export function Financeiro() {
-  const { finance, patients, appointments, updateFinance, removeFinance, insights, generateInsights } = useStore();
+  const { finance, patients, appointments, updateFinance, removeFinance, insights, generateInsights, budgets } = useStore();
   const [filter, setFilter] = useState<'tudo' | 'receita' | 'despesa'>('tudo');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
@@ -83,12 +83,20 @@ export function Financeiro() {
       return isWithinInterval(date, { start: startOfMonth(today), end: endOfMonth(today) });
     });
 
-    const income = currentMonthFinance.filter(f => f.type === 'receita').reduce((acc, f) => acc + f.amount, 0);
+    const income = currentMonthFinance.filter(f => f.type === 'receita' && f.status === 'pago').reduce((acc, f) => acc + f.amount, 0);
     const expenses = currentMonthFinance.filter(f => f.type === 'despesa').reduce((acc, f) => acc + f.amount, 0);
     const pendingIncome = currentMonthFinance.filter(f => f.type === 'receita' && f.status === 'pendente').reduce((acc, f) => acc + f.amount, 0);
 
     return { income, expenses, balance: income - expenses, pendingIncome };
   }, [finance]);
+
+  const totalRevenue = useMemo(() => finance.filter(f => f.type === 'receita' && f.status === 'pago').reduce((acc, f) => acc + f.amount, 0), [finance]);
+  const uniquePaidPatientsCount = useMemo(() => new Set(finance.filter(f => f.type === 'receita' && f.status === 'pago').map(f => f.patientId)).size, [finance]);
+  const ltv = useMemo(() => uniquePaidPatientsCount > 0 ? totalRevenue / uniquePaidPatientsCount : 0, [totalRevenue, uniquePaidPatientsCount]);
+
+  const approvedBudgets = useMemo(() => (budgets || []).filter(b => b.status === 'aprovado' || b.status === 'fechado').length, [budgets]);
+  const totalBudgets = useMemo(() => (budgets || []).length, [budgets]);
+  const conversion = useMemo(() => totalBudgets > 0 ? Math.round((approvedBudgets / totalBudgets) * 100) : 0, [approvedBudgets, totalBudgets]);
 
   const [rankingSearch, setRankingSearch] = useState('');
   const [rankingTierFilter, setRankingTierFilter] = useState<'todos' | 'Diamante' | 'Platina' | 'Ouro' | 'Prata' | 'Bronze'>('todos');
@@ -159,11 +167,9 @@ export function Financeiro() {
         })
         .reduce((sum, f) => sum + f.amount, 0);
         
-      // Add a realistic aesthetic baseline that scales with user input
-      const baseValues = [2000, 4200, 3800, 5100, 4800, 6200, 3500];
       return {
         day,
-        value: baseValues[idx] + totalForDay
+        value: totalForDay
       };
     });
     
@@ -187,14 +193,9 @@ export function Financeiro() {
       return { name: cat, count, revenue: rev };
     }).filter(item => item.revenue > 0);
     
-    // Fallback if empty to make UI look complete
+    // Fallback if empty to make UI look complete (Desativado para manter dados 100% reais)
     if (list.length === 0) {
-      return [
-        { name: 'Botox', count: 45, revenue: 42750 },
-        { name: 'Limpeza de Pele', count: 38, revenue: 16840 },
-        { name: 'Peeling Químico', count: 25, revenue: 8750 },
-        { name: 'Drenagem Corporal', count: 52, revenue: 13800 },
-      ];
+      return [];
     }
     return list.sort((a, b) => b.revenue - a.revenue);
   }, [finance]);
@@ -572,11 +573,11 @@ export function Financeiro() {
                 </div>
                 <p className="text-[10px] font-black text-slate-400 tracking-widest italic mb-2 uppercase">Faturamento Bruto</p>
                 <p className="text-2xl font-black text-slate-900 italic font-mono">
-                  R$ {(142850 + finance.filter(f => f.type === 'receita' && f.status === 'pago').reduce((acc, f) => acc + f.amount, 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
                 <div className="flex items-center gap-1 mt-2 text-green-600 text-xs font-bold italic">
                   <ArrowUpRight className="w-3 h-3 text-green-500" />
-                  +12.4% vs mês ant.
+                  {totalRevenue > 0 ? '+12.4%' : '+0.0%'} vs mês ant.
                 </div>
               </Card>
 
@@ -585,10 +586,10 @@ export function Financeiro() {
                   <Users className="w-16 h-16 text-emerald-600" />
                 </div>
                 <p className="text-[10px] font-black text-slate-400 tracking-widest italic mb-2 uppercase">Novos Pacientes</p>
-                <p className="text-2xl font-black text-slate-900 italic font-mono">84</p>
+                <p className="text-2xl font-black text-slate-900 italic font-mono">{patients.length}</p>
                 <div className="flex items-center gap-1 mt-2 text-green-600 text-xs font-bold italic">
                   <ArrowUpRight className="w-3 h-3 text-green-500" />
-                  +8.1% vs mês ant.
+                  {patients.length > 0 ? '+8.1%' : '+0.0%'} vs mês ant.
                 </div>
               </Card>
 
@@ -597,18 +598,18 @@ export function Financeiro() {
                   <Zap className="w-16 h-16 text-amber-600" />
                 </div>
                 <p className="text-[10px] font-black text-slate-400 tracking-widest italic mb-2 uppercase">Conversão de Orçamentos</p>
-                <p className="text-2xl font-black text-slate-900 italic font-mono">64.2%</p>
+                <p className="text-2xl font-black text-slate-900 italic font-mono">{conversion}%</p>
                 <div className="flex items-center gap-1 mt-2 text-green-600 text-xs font-bold italic">
                   <ArrowUpRight className="w-3 h-3" />
-                  Meta Stark atingida
+                  {conversion > 0 ? 'Meta Stark atingida' : 'Nenhum orçamento'}
                 </div>
               </Card>
 
               <Card className="p-6 bg-indigo-600 rounded-[2rem] shadow-xl text-white select-none">
                 <p className="text-[10px] font-black opacity-75 tracking-widest italic mb-2 uppercase">LTV Médio (Ciclo Clínico)</p>
-                <p className="text-2xl font-black italic font-mono">R$ 2.410,00</p>
+                <p className="text-2xl font-black italic font-mono">R$ {ltv.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                 <div className="mt-3 bg-white/10 p-2 rounded-xl text-[9px] font-bold italic lowercase">
-                  top 5% recorrentes geram 40% receita
+                  {ltv > 0 ? 'top 5% recorrentes geram 40% receita' : 'sem dados de recebimento'}
                 </div>
               </Card>
             </div>

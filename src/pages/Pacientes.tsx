@@ -289,6 +289,10 @@ export function Pacientes() {
           setIsNewPatientModalOpen(false);
         }} 
         patientId={selectedPatientId} 
+        onSelectPatient={(id) => {
+          setSelectedPatientId(id);
+          setIsNewPatientModalOpen(false);
+        }}
       />
     </div>
   );

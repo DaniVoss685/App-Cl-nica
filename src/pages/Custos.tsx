@@ -20,7 +20,8 @@ import {
   History,
   Clock,
   Settings,
-  ShieldAlert
+  ShieldAlert,
+  Sparkles
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CostModal } from '../components/CostModal';
@@ -41,8 +42,73 @@ export function Custos() {
     updateInventoryItem, 
     supplyExpenses,
     appointments,
-    patients
+    patients,
+    clinicType,
+    addInventoryItem
   } = useStore();
+
+  const suggestionsMap = React.useMemo<Record<string, Array<{ name: string; unit: 'unidade' | 'pacote' | 'peso' | 'ml' | 'g'; unitCost: number; category: string; minQuantity: number; unitsPerPackage?: number; subUnitName?: string }>>>(() => ({
+    odontologia: [
+      { name: 'Resina Composta Fotopolimerizável', unit: 'unidade', unitCost: 85, category: 'material', minQuantity: 5 },
+      { name: 'Anestésico Odontológico (Mepivacaína)', unit: 'pacote', unitCost: 120, category: 'medicamento', minQuantity: 3, unitsPerPackage: 50, subUnitName: 'tubete' },
+      { name: 'Sugador de Saliva Descartável', unit: 'pacote', unitCost: 18, category: 'consumível', minQuantity: 4, unitsPerPackage: 100, subUnitName: 'un' },
+      { name: 'Luvas de Procedimento Látex', unit: 'pacote', unitCost: 45, category: 'consumível', minQuantity: 10, unitsPerPackage: 100, subUnitName: 'un' },
+      { name: 'Gesso Especial Odontológico 1kg', unit: 'peso', unitCost: 35, category: 'material', minQuantity: 2 },
+      { name: 'Máscara Descartável Tripla', unit: 'pacote', unitCost: 20, category: 'consumível', minQuantity: 5, unitsPerPackage: 50, subUnitName: 'un' },
+      { name: 'Agulha Gengival Descartável', unit: 'pacote', unitCost: 42, category: 'consumível', minQuantity: 3, unitsPerPackage: 100, subUnitName: 'un' },
+      { name: 'Babador Descartável Impermeável', unit: 'pacote', unitCost: 28, category: 'consumível', minQuantity: 4, unitsPerPackage: 100, subUnitName: 'un' }
+    ],
+    estética: [
+      { name: 'Toxina Botulínica (Botox) 100 UI', unit: 'unidade', unitCost: 650, category: 'medicamento', minQuantity: 2 },
+      { name: 'Ácido Hialurônico Preenchedor 1ml', unit: 'unidade', unitCost: 450, category: 'material', minQuantity: 3 },
+      { name: 'Microagulhas para Dermaroller', unit: 'unidade', unitCost: 35, category: 'material', minQuantity: 5 },
+      { name: 'Álcool 70% Antisséptico 1L', unit: 'ml', unitCost: 12, category: 'consumível', minQuantity: 2 },
+      { name: 'Seringa Descartável 3ml', unit: 'pacote', unitCost: 30, category: 'consumível', minQuantity: 4, unitsPerPackage: 100, subUnitName: 'un' },
+      { name: 'Touca Descartável Sanfonada', unit: 'pacote', unitCost: 15, category: 'consumível', minQuantity: 5, unitsPerPackage: 100, subUnitName: 'un' }
+    ],
+    medicina: [
+      { name: 'Seringa com Agulha Descartável', unit: 'unidade', unitCost: 1.5, category: 'consumível', minQuantity: 50 },
+      { name: 'Algodão Hidrófilo Rolo 500g', unit: 'peso', unitCost: 18, category: 'consumível', minQuantity: 3 },
+      { name: 'Fita Micropore 25mm x 10m', unit: 'unidade', unitCost: 8, category: 'consumível', minQuantity: 5 },
+      { name: 'Avental Descartável Gramatura 30', unit: 'pacote', unitCost: 45, category: 'consumível', minQuantity: 4, unitsPerPackage: 10, subUnitName: 'un' },
+      { name: 'Sorologia Fisiológica 0,9% 500ml', unit: 'ml', unitCost: 10, category: 'medicamento', minQuantity: 10 }
+    ],
+    fisioterapia: [
+      { name: 'Óleo para Massagem Neutro 1L', unit: 'ml', unitCost: 55, category: 'material', minQuantity: 2 },
+      { name: 'Agulhas para Acupuntura 0,25x30', unit: 'pacote', unitCost: 28, category: 'material', minQuantity: 3, unitsPerPackage: 100, subUnitName: 'un' },
+      { name: 'Fita Kinesio Bandagem Elastica', unit: 'unidade', unitCost: 25, category: 'material', minQuantity: 5 },
+      { name: 'Lençol de Papel para Maca Rolo', unit: 'unidade', unitCost: 15, category: 'consumível', minQuantity: 10 },
+      { name: 'Gel Condutor para Ultrassom 5kg', unit: 'peso', unitCost: 45, category: 'material', minQuantity: 2 }
+    ],
+    psicologia: [
+      { name: 'Folhas de Teste Psicológico (HTP)', unit: 'pacote', unitCost: 120, category: 'material', minQuantity: 2, unitsPerPackage: 25, subUnitName: 'folha' },
+      { name: 'Bloco de Anotações Clínicas', unit: 'unidade', unitCost: 12, category: 'consumível', minQuantity: 5 },
+      { name: 'Caixa de Lenços de Papel Duplo', unit: 'unidade', unitCost: 6, category: 'consumível', minQuantity: 4 },
+      { name: 'Jogo / Cartão de Recursos Lúdicos', unit: 'unidade', unitCost: 80, category: 'material', minQuantity: 1 },
+      { name: 'Brinquedos Terapêuticos (Kit Mini)', unit: 'unidade', unitCost: 150, category: 'material', minQuantity: 1 }
+    ]
+  }), []);
+
+  const normalizedType = (clinicType || '').toLowerCase();
+  
+  const suggestions = React.useMemo(() => {
+    const list = suggestionsMap[normalizedType] || [];
+    return list.filter(item => !inventory.some(i => i.name.toLowerCase() === item.name.toLowerCase()));
+  }, [normalizedType, inventory, suggestionsMap]);
+
+  const handleAddSuggestedItem = (suggestion: any) => {
+    addInventoryItem({
+      name: suggestion.name,
+      unit: suggestion.unit,
+      unitCost: suggestion.unitCost,
+      category: suggestion.category,
+      quantity: 10,
+      minQuantity: suggestion.minQuantity,
+      unitsPerPackage: suggestion.unitsPerPackage,
+      subUnitName: suggestion.subUnitName
+    });
+    toast.success(`Insumo "${suggestion.name}" adicionado ao estoque!`);
+  };
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
@@ -91,6 +157,26 @@ export function Custos() {
     const minVal = item.minQuantity !== undefined ? item.minQuantity : 5;
     return (item.quantity || 0) < minVal;
   }).length;
+
+  const estimatedMargin = React.useMemo(() => {
+    if (!services || services.length === 0) return 0;
+    const totalMarginPct = services.reduce((total, s) => {
+      const suppliesCost = getServiceSuppliesCost(s);
+      const fixedCostProRata = 32;
+      const marginAmt = s.price - suppliesCost - fixedCostProRata;
+      return total + (s.price > 0 ? (marginAmt / s.price) * 100 : 0);
+    }, 0);
+    return Math.max(0, Math.round(totalMarginPct / services.length));
+  }, [services, inventory]);
+
+  const avgInsumosCostPct = React.useMemo(() => {
+    if (!services || services.length === 0) return 0;
+    const totalInsumosPct = services.reduce((total, s) => {
+      const suppliesCost = getServiceSuppliesCost(s);
+      return total + (s.price > 0 ? (suppliesCost / s.price) * 100 : 0);
+    }, 0);
+    return Math.max(0, Math.round(totalInsumosPct / services.length));
+  }, [services, inventory]);
 
   // Helper to find future appointments using a specific item
   const getAffectedAppointmentsForItem = (itemId: string) => {
@@ -193,7 +279,7 @@ export function Custos() {
                 <Target className="w-4 h-4 text-emerald-500" />
                 <h3 className="text-[10px] font-black text-slate-400 tracking-widest italic uppercase">Margem Operacional Estimada</h3>
               </div>
-              <p className="text-2xl font-black text-slate-900 italic">54.5%</p>
+              <p className="text-2xl font-black text-slate-900 italic">{estimatedMargin}%</p>
               <div className="flex items-center gap-1 mt-2 text-indigo-600 text-xs font-bold italic">
                 <TrendingUp className="w-3 h-3" />
                 Meta: 60%
@@ -216,9 +302,9 @@ export function Custos() {
                 <PieChart className="w-4 h-4 text-amber-500" />
                 <h3 className="text-[10px] font-black text-slate-400 tracking-widest italic uppercase">Custo Médio de Insumos</h3>
               </div>
-              <p className="text-2xl font-black text-slate-900 italic">21.8%</p>
+              <p className="text-2xl font-black text-slate-900 italic">{avgInsumosCostPct}%</p>
               <div className="w-full bg-slate-100 h-1.5 rounded-full mt-4 overflow-hidden">
-                <div className="bg-amber-500 h-full w-[22%] transition-all" />
+                <div className="bg-amber-500 h-full transition-all" style={{ width: `${avgInsumosCostPct}%` }} />
               </div>
             </div>
           </Card>
@@ -409,6 +495,47 @@ export function Custos() {
           </Card>
         </div>
       </div>
+
+      {/* Suggestions Section */}
+      {suggestions.length > 0 && (
+        <motion.div 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-6 bg-indigo-50/30 border border-indigo-100/50 rounded-[2.5rem] shadow-sm space-y-4 mt-8"
+        >
+          <div className="flex items-center gap-2 text-indigo-800">
+            <Sparkles className="w-5 h-5 text-indigo-600" />
+            <h3 className="font-black italic uppercase tracking-tight text-xs">
+              Insumos sugeridos para {clinicType}
+            </h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {suggestions.map((suggestion) => (
+              <div 
+                key={suggestion.name} 
+                className="bg-white border border-slate-100 p-4 rounded-2xl flex flex-col justify-between hover:shadow-md transition-all gap-3"
+              >
+                <div>
+                  <h4 className="font-black text-slate-800 text-sm italic capitalize leading-tight">{suggestion.name}</h4>
+                  <Badge variant="outline" className="text-[9px] bg-slate-50 border-slate-100 text-slate-500 font-bold uppercase mt-1">
+                    {suggestion.category}
+                  </Badge>
+                  <div className="flex gap-4 mt-3 text-[11px] font-bold text-slate-500 border-t border-slate-50 pt-2">
+                    <span className="flex items-center gap-1 font-sans">Unidade: {suggestion.unit}</span>
+                    <span className="flex items-center gap-1 text-green-600 font-mono"><DollarSign className="w-3.5 h-3.5 text-green-500" /> R$ {suggestion.unitCost}</span>
+                  </div>
+                </div>
+                <Button 
+                  onClick={() => handleAddSuggestedItem(suggestion)}
+                  className="w-full h-9 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Adicionar ao estoque
+                </Button>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       {/* Stocks and Inventories sections: direct incremental modifier */}
       <Card className="bg-white border-slate-200 rounded-[2.5rem] shadow-sm overflow-hidden mt-8">
