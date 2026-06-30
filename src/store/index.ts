@@ -18,8 +18,35 @@ import {
   SupplyExpense
 } from '../types';
 
+// ── WhatsApp types ────────────────────────────────────────────────────────────
+export interface WaChat {
+  id: string;              // e.g. "5511999999999@s.whatsapp.net"
+  name: string;            // display name
+  lastMessage: string;
+  lastMessageTimestamp: number; // Unix seconds
+  unreadCount: number;
+  isGroup: boolean;
+  profilePicUrl?: string;
+  lastMessageFromMe?: boolean;
+  remoteJidAlt?: string;
+}
+
+export interface WaMessage {
+  id: string;
+  fromMe: boolean;
+  text: string;
+  timestamp: number;       // Unix seconds
+  status?: string;         // PENDING | SENT | DELIVERED | READ | PLAYED
+  pushName?: string;
+  mediaType?: 'image' | 'audio' | 'video' | 'document';
+  mediaUrl?: string;
+  mediaMimeType?: string;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 interface ClinicState {
   clinicName: string;
+
   clinicType: string;
   profilePicture: string | null;
   pixKey: string;
@@ -70,7 +97,7 @@ interface ClinicState {
   addPatient: (p: Omit<Patient, 'id' | 'createdAt'> & { id?: string }) => void;
   updatePatient: (id: string, data: Partial<Patient>) => void;
   removePatient: (id: string) => void;
-  addAppointment: (a: Omit<Appointment, 'id'>) => void;
+  addAppointment: (a: Omit<Appointment, 'id'>, customReturnDate?: string) => void;
   updateAppointment: (id: string, data: Partial<Appointment>) => void;
   removeAppointment: (id: string) => void;
   addService: (s: Omit<Service, 'id'>) => void;
@@ -99,6 +126,7 @@ interface ClinicState {
   addSupplyExpense: (expense: Omit<SupplyExpense, 'id'>) => void;
   addServiceCategory: (category: string) => void;
   removeServiceCategory: (category: string) => void;
+  renameServiceCategory: (oldName: string, newName: string) => void;
   addDocument: (d: Omit<Document, 'id'>) => void;
   removeDocument: (id: string) => void;
   bulkAddPatients: (ps: Omit<Patient, 'id' | 'createdAt'>[]) => void;
@@ -117,6 +145,25 @@ interface ClinicState {
   addRepoFile: (file: FileItem) => void;
   deleteRepoFile: (id: string) => void;
   renameRepoFile: (id: string, newName: string) => void;
+  // Evolution API / WhatsApp
+  evolutionApiUrl: string;
+  evolutionApiKey: string;
+  evolutionInstance: string;
+  whatsappConnected: boolean;
+  setEvolutionConfig: (url: string, key: string, instance: string) => void;
+  setWhatsappConnected: (connected: boolean) => void;
+  // WhatsApp real conversations
+  whatsappChats: WaChat[];
+  whatsappMessages: Record<string, WaMessage[]>;
+  chatStatuses: Record<string, 'fila' | 'atendimento' | 'finalizado'>;
+  setWhatsappChats: (chats: WaChat[]) => void;
+  upsertWhatsappMessages: (chatId: string, messages: WaMessage[]) => void;
+  addOutboundMessage: (chatId: string, message: WaMessage, optimisticId?: string) => void;
+  setChatStatus: (chatId: string, status: 'fila' | 'atendimento' | 'finalizado') => void;
+  syncWhatsappStateWithPatients: (patients: Patient[]) => void;
+  postponedCheckouts: Record<string, number>;
+  setPostponedCheckout: (appointmentId: string, resumeTimestamp: number) => void;
+  removePostponedCheckout: (appointmentId: string) => void;
 }
 
 function generateUUID(): string {
@@ -243,8 +290,200 @@ export const useStore = create<ClinicState>()(
       repoFolders: [],
       repoFiles: [],
       sidebarCollapsed: false,
+      // Evolution API / WhatsApp config
+      evolutionApiUrl: '',
+      evolutionApiKey: '',
+      evolutionInstance: '',
+      whatsappConnected: false,
+      // WhatsApp real conversations (persisted)
+      whatsappChats: [],
+      whatsappMessages: {},
+      chatStatuses: {},
+      postponedCheckouts: {},
+      setPostponedCheckout: (appointmentId, resumeTimestamp) => set((state) => ({
+        postponedCheckouts: {
+          ...state.postponedCheckouts,
+          [appointmentId]: resumeTimestamp
+        }
+      })),
+      removePostponedCheckout: (appointmentId) => set((state) => {
+        const copy = { ...state.postponedCheckouts };
+        delete copy[appointmentId];
+        return { postponedCheckouts: copy };
+      }),
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
-      
+      setEvolutionConfig: (url, key, instance) => set({ evolutionApiUrl: url.trim(), evolutionApiKey: key.trim(), evolutionInstance: instance.trim() }),
+      setWhatsappConnected: (connected) => set({ whatsappConnected: connected }),
+      setWhatsappChats: (chats) => set((state) => {
+        const newMessages = { ...state.whatsappMessages };
+        let messagesChanged = false;
+
+        chats.forEach(chat => {
+          if (!chat.lastMessage) return;
+
+          const chatMsgs = newMessages[chat.id] || [];
+          
+          // Verifica se a última mensagem já existe (por texto e timestamp próximo)
+          const textMatch = chatMsgs.some(m => 
+            m.text === chat.lastMessage && 
+            Math.abs(m.timestamp - chat.lastMessageTimestamp) < 10
+          );
+
+          if (!textMatch) {
+            const newMsg: WaMessage = {
+              id: `api-last-${chat.id}-${chat.lastMessageTimestamp}`,
+              fromMe: chat.lastMessageFromMe ?? false,
+              text: chat.lastMessage,
+              timestamp: chat.lastMessageTimestamp,
+              status: 'READ',
+            };
+            newMessages[chat.id] = [...chatMsgs, newMsg].sort((a, b) => a.timestamp - b.timestamp);
+            messagesChanged = true;
+          }
+        });
+
+        // Preserva chats locais que estão em atendimento/fila ou possuem histórico de mensagens
+        // mesmo que a Evolution API não os retorne na listagem de chats recentes.
+        const apiChatIds = new Set(chats.map(c => c.id));
+        const keptLocalChats = state.whatsappChats.filter(localChat => {
+          if (apiChatIds.has(localChat.id)) return false;
+          const status = state.chatStatuses[localChat.id];
+          const hasMessages = (state.whatsappMessages[localChat.id] || []).length > 0;
+          return status === 'fila' || status === 'atendimento' || hasMessages;
+        });
+
+        const mergedChats = [...chats];
+        keptLocalChats.forEach(localChat => {
+          const msgs = newMessages[localChat.id] || [];
+          const lastMsg = msgs[msgs.length - 1];
+          const updatedChat = { ...localChat };
+          if (lastMsg) {
+            updatedChat.lastMessage = lastMsg.text;
+            updatedChat.lastMessageTimestamp = lastMsg.timestamp;
+            updatedChat.lastMessageFromMe = lastMsg.fromMe;
+          }
+          mergedChats.push(updatedChat);
+        });
+
+        // Ordena por timestamp da última mensagem decrescente
+        mergedChats.sort((a, b) => b.lastMessageTimestamp - a.lastMessageTimestamp);
+
+        return messagesChanged 
+          ? { whatsappChats: mergedChats, whatsappMessages: newMessages }
+          : { whatsappChats: mergedChats };
+      }),
+      upsertWhatsappMessages: (chatId, messages) => set((state) => {
+        const existing = state.whatsappMessages[chatId] || [];
+        // Merge by id — avoid duplicates
+        const map = new Map<string, WaMessage>();
+        existing.forEach(m => map.set(m.id, m));
+        messages.forEach(m => map.set(m.id, m));
+        const merged = Array.from(map.values()).sort((a, b) => a.timestamp - b.timestamp);
+        return { whatsappMessages: { ...state.whatsappMessages, [chatId]: merged } };
+      }),
+      addOutboundMessage: (chatId, message, optimisticId) => set((state) => {
+        const existing = state.whatsappMessages[chatId] || [];
+        
+        let updated;
+        if (optimisticId) {
+          const idx = existing.findIndex(m => m.id === optimisticId);
+          if (idx >= 0) {
+            updated = existing.map((m, i) => i === idx ? message : m);
+          } else {
+            updated = [...existing, message];
+          }
+        } else {
+          const idx = existing.findIndex(m => m.id === message.id);
+          updated = idx >= 0
+            ? existing.map((m, i) => i === idx ? message : m)
+            : [...existing, message];
+        }
+
+        // Promove para 'atendimento' ao enviar mensagem se não estiver finalizado
+        const currentStatus = state.chatStatuses[chatId];
+        const newStatuses = { ...state.chatStatuses };
+        if (currentStatus !== 'atendimento') {
+          newStatuses[chatId] = 'atendimento';
+        }
+
+        // Atualiza a última mensagem do chat correspondente na lista
+        const updatedChats = state.whatsappChats.map(c => {
+          if (c.id === chatId) {
+            return {
+              ...c,
+              lastMessage: message.text,
+              lastMessageTimestamp: message.timestamp,
+              lastMessageFromMe: true
+            };
+          }
+          return c;
+        });
+
+        return { 
+          whatsappMessages: { ...state.whatsappMessages, [chatId]: updated },
+          chatStatuses: newStatuses,
+          whatsappChats: updatedChats
+        };
+      }),
+      setChatStatus: (chatId, status) => set((state) => ({
+        chatStatuses: { ...state.chatStatuses, [chatId]: status }
+      })),
+      syncWhatsappStateWithPatients: (patients) => set((state) => {
+        let changed = false;
+        const newStatuses = { ...state.chatStatuses };
+        const newMessages = { ...state.whatsappMessages };
+
+        (patients || []).forEach(p => {
+          if (!p.phone) return;
+          
+          // Formata telefone do paciente para JID numérico padrão brasileiro
+          const phoneClean = p.phone.replace(/\D/g, '');
+          let digits = phoneClean;
+          if (digits.length === 10 || digits.length === 11) {
+            digits = `55${digits}`;
+          }
+          const jidNum = digits ? `${digits}@s.whatsapp.net` : '';
+          if (!jidNum) return;
+
+          // Busca se existe um chat real correspondente na Evolution API com nome idêntico ou JID correspondente (incluindo LID)
+          const realChat = state.whatsappChats.find(c => 
+            c.id !== jidNum && 
+            (c.id === jidNum || 
+             c.remoteJidAlt === jidNum ||
+             c.name.toLowerCase().trim() === p.name.toLowerCase().trim())
+          );
+
+          if (realChat) {
+            const realJid = realChat.id;
+            
+            // 1. Migra status
+            if (state.chatStatuses[jidNum] && state.chatStatuses[realJid] !== state.chatStatuses[jidNum]) {
+              newStatuses[realJid] = state.chatStatuses[jidNum];
+              delete newStatuses[jidNum];
+              changed = true;
+            }
+            
+            // 2. Migra mensagens locais
+            if (state.whatsappMessages[jidNum] && state.whatsappMessages[jidNum].length > 0) {
+              const existingRealMsgs = state.whatsappMessages[realJid] || [];
+              const merged = [...existingRealMsgs, ...state.whatsappMessages[jidNum]];
+              
+              const map = new Map<string, WaMessage>();
+              merged.forEach(m => map.set(m.id, m));
+              newMessages[realJid] = Array.from(map.values()).sort((a, b) => a.timestamp - b.timestamp);
+              
+              delete newMessages[jidNum];
+              changed = true;
+            }
+          }
+        });
+
+        if (changed) {
+          return { chatStatuses: newStatuses, whatsappMessages: newMessages };
+        }
+        return {};
+      }),
+
       // Auth implementation
       currentClient: null,
 
@@ -760,10 +999,55 @@ export const useStore = create<ClinicState>()(
         get().syncToSupabase('pacientes_clinica', { id }, 'delete');
       },
       
-      addAppointment: (a) => {
+      addAppointment: (a, customReturnDate) => {
         const newAppt = { ...a, id: generateUUID(), confirmationStatus: a.confirmationStatus || 'pendente' };
-        set((state) => ({ appointments: [...state.appointments, newAppt] }));
+        
+        const services = get().services;
+        const service = services.find(s => s.id === a.serviceId);
+        
+        let returnAppt: any = null;
+        if (customReturnDate !== 'none' && service && service.generatesFollowUp && service.followUpDays) {
+          let returnDateStr = '';
+          if (customReturnDate) {
+            returnDateStr = customReturnDate;
+          } else {
+            const [year, month, day] = a.date.split('-').map(Number);
+            const baseDate = new Date(year, month - 1, day);
+            const returnDate = addDays(baseDate, service.followUpDays);
+            returnDateStr = format(returnDate, 'yyyy-MM-dd');
+          }
+          
+          returnAppt = {
+            id: generateUUID(),
+            patientId: a.patientId,
+            professionalId: a.professionalId,
+            serviceId: a.serviceId,
+            packageId: a.packageId,
+            date: returnDateStr,
+            startTime: a.startTime,
+            endTime: a.endTime,
+            status: 'agendado',
+            confirmationStatus: 'pendente',
+            type: 'retorno',
+            value: 0,
+            paymentStatus: 'pago',
+            linkedToAppointmentId: newAppt.id,
+            notes: `Retorno automático de ${service.name} (${service.followUpDays}d) vinculado ao atendimento #${newAppt.id.slice(0, 5)}`
+          };
+        }
+
+        set((state) => {
+          const newAppointments = [...state.appointments, newAppt];
+          if (returnAppt) {
+            newAppointments.push(returnAppt);
+          }
+          return { appointments: newAppointments };
+        });
+
         get().syncToSupabase('agendamentos_clinica', newAppt, 'insert');
+        if (returnAppt) {
+          get().syncToSupabase('agendamentos_clinica', returnAppt, 'insert');
+        }
       },
       updateAppointment: (id, data) => set((state) => {
         const updated = state.appointments.map(a => a.id === id ? { ...a, ...data } : a);
@@ -816,15 +1100,79 @@ export const useStore = create<ClinicState>()(
           }
         }
 
+        // Lógica de atualização/sincronização do retorno automático
+        let finalAppointments = updated;
+        if (appt) {
+          const service = state.services.find(s => s.id === appt.serviceId);
+          const existingReturn = state.appointments.find(a => a.linkedToAppointmentId === id);
+
+          if (service && service.generatesFollowUp && service.followUpDays) {
+            const [year, month, day] = appt.date.split('-').map(Number);
+            const baseDate = new Date(year, month - 1, day);
+            const returnDate = addDays(baseDate, service.followUpDays);
+            const returnDateStr = format(returnDate, 'yyyy-MM-dd');
+
+            if (existingReturn) {
+              const updatedReturn = {
+                ...existingReturn,
+                date: returnDateStr,
+                startTime: appt.startTime,
+                endTime: appt.endTime,
+                professionalId: appt.professionalId,
+                patientId: appt.patientId
+              };
+              finalAppointments = finalAppointments.map(a => a.id === existingReturn.id ? updatedReturn : a);
+              get().syncToSupabase('agendamentos_clinica', updatedReturn, 'update');
+            } else {
+              const returnApptToInsert: Appointment = {
+                id: generateUUID(),
+                patientId: appt.patientId,
+                professionalId: appt.professionalId,
+                serviceId: appt.serviceId,
+                packageId: appt.packageId,
+                date: returnDateStr,
+                startTime: appt.startTime,
+                endTime: appt.endTime,
+                status: 'agendado',
+                confirmationStatus: 'pendente',
+                type: 'retorno',
+                value: 0,
+                paymentStatus: 'pago',
+                linkedToAppointmentId: appt.id,
+                notes: `Retorno automático de ${service.name} (${service.followUpDays}d) vinculado ao atendimento #${appt.id.slice(0, 5)}`
+              };
+              finalAppointments = [...finalAppointments, returnApptToInsert];
+              get().syncToSupabase('agendamentos_clinica', returnApptToInsert, 'insert');
+            }
+          } else {
+            if (existingReturn) {
+              finalAppointments = finalAppointments.filter(a => a.id !== existingReturn.id);
+              get().syncToSupabase('agendamentos_clinica', { id: existingReturn.id }, 'delete');
+            }
+          }
+        }
+
         return { 
-          appointments: updated, 
+          appointments: finalAppointments, 
           inventory: updatedInventory,
           supplyExpenses: updatedExpenses 
         };
       }),
       removeAppointment: (id) => {
-        set((state) => ({ appointments: state.appointments.filter(a => a.id !== id) }));
+        let returnIdToDelete: string | null = null;
+        set((state) => {
+          const returnAppt = state.appointments.find(a => a.linkedToAppointmentId === id);
+          if (returnAppt) {
+            returnIdToDelete = returnAppt.id;
+          }
+          const filtered = state.appointments.filter(a => a.id !== id && a.id !== returnIdToDelete);
+          return { appointments: filtered };
+        });
+        
         get().syncToSupabase('agendamentos_clinica', { id }, 'delete');
+        if (returnIdToDelete) {
+          get().syncToSupabase('agendamentos_clinica', { id: returnIdToDelete }, 'delete');
+        }
       },
       
       addService: (s) => {
@@ -935,6 +1283,9 @@ export const useStore = create<ClinicState>()(
       
       addServiceCategory: (category) => set((state) => ({ serviceCategories: state.serviceCategories.includes(category) ? state.serviceCategories : [...state.serviceCategories, category] })),
       removeServiceCategory: (category) => set((state) => ({ serviceCategories: state.serviceCategories.filter(cat => cat !== category) })),
+      renameServiceCategory: (oldName, newName) => set((state) => ({
+        serviceCategories: state.serviceCategories.map(cat => cat === oldName ? newName.trim() : cat)
+      })),
       addDocument: (d) => set((state) => ({ documents: [{ ...d, id: generateUUID() }, ...state.documents] })),
       removeDocument: (id) => set((state) => ({ documents: state.documents.filter(d => d.id !== id) })),
       bulkAddPatients: (ps) => set((state) => ({ patients: [...state.patients, ...ps.map(p => ({ ...p, id: generateUUID(), createdAt: new Date().toISOString() }))] })),
@@ -1080,6 +1431,22 @@ export const useStore = create<ClinicState>()(
     }),
     {
       name: 'clinic-stark-storage',
+      partialize: (state) => {
+        const cleanMessages: Record<string, WaMessage[]> = {};
+        Object.keys(state.whatsappMessages || {}).forEach(chatId => {
+          const msgs = state.whatsappMessages[chatId] || [];
+          cleanMessages[chatId] = msgs.slice(-40).map(msg => {
+            if (msg.mediaUrl && msg.mediaUrl.startsWith('data:')) {
+              return { ...msg, mediaUrl: undefined };
+            }
+            return msg;
+          });
+        });
+        return {
+          ...state,
+          whatsappMessages: cleanMessages
+        };
+      }
     }
   )
 );

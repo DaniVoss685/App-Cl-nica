@@ -6,6 +6,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Onboarding } from './pages/Onboarding';
 import { Login } from './pages/Login';
 import { Agenda } from './pages/Agenda';
+import { Confirmacoes } from './pages/Confirmacoes';
 import { Pacientes } from './pages/Pacientes';
 import { Comercial } from './pages/Comercial';
 import { Financeiro } from './pages/Financeiro';
@@ -73,6 +74,7 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/agenda" element={<Agenda />} />
+            <Route path="/confirmacoes" element={<Confirmacoes />} />
             <Route path="/pacientes" element={<Pacientes />} />
             <Route path="/comercial" element={<Comercial />} />
             <Route path="/whatsapp" element={<WhatsApp />} />

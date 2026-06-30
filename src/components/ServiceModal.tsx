@@ -31,7 +31,7 @@ interface ServiceModalProps {
 }
 
 export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) {
-  const { services, addService, updateService, serviceCategories, addServiceCategory, removeServiceCategory, inventory, professionals } = useStore();
+  const { services, addService, updateService, serviceCategories, addServiceCategory, removeServiceCategory, renameServiceCategory, inventory, professionals } = useStore();
   const [formData, setFormData] = useState({
     name: '',
     category: '',
@@ -141,6 +141,14 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
 
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [categorySearch, setCategorySearch] = useState('');
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [editingCategoryValue, setEditingCategoryValue] = useState('');
+
+  const sortedCategories = [...serviceCategories].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  const filteredCategories = sortedCategories.filter(cat =>
+    cat.toLowerCase().includes(categorySearch.toLowerCase())
+  );
 
   const handleAddCategory = () => {
     const clean = newCategoryName.trim();
@@ -155,6 +163,24 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
     if (formData.category === cat) {
       setFormData(prev => ({ ...prev, category: '' }));
     }
+  };
+
+  const handleStartEditCategory = (cat: string) => {
+    setEditingCategory(cat);
+    setEditingCategoryValue(cat);
+  };
+
+  const handleSaveEditCategory = (oldName: string) => {
+    const newName = editingCategoryValue.trim();
+    if (!newName || newName === oldName) {
+      setEditingCategory(null);
+      return;
+    }
+    renameServiceCategory(oldName, newName);
+    if (formData.category === oldName) {
+      setFormData(prev => ({ ...prev, category: newName }));
+    }
+    setEditingCategory(null);
   };
 
   const handleClose = () => {
@@ -297,6 +323,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
                   onValueChange={v => {
                     if (v === 'manage_categories') {
                       setIsCategoryManagerOpen(true);
+                      setCategorySearch('');
                     } else {
                       setFormData({ ...formData, category: v });
                     }
@@ -306,10 +333,25 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
                     <SelectValue placeholder="Selecione a categoria" />
                   </SelectTrigger>
                   <SelectContent className="z-[600]">
+                    {/* Campo de busca de categoria */}
+                    <div className="px-2 pb-2 pt-1 border-b border-slate-100">
+                      <input
+                        type="text"
+                        placeholder="Pesquisar categoria..."
+                        value={categorySearch}
+                        onChange={e => setCategorySearch(e.target.value)}
+                        onKeyDown={e => e.stopPropagation()}
+                        className="w-full h-8 px-3 text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-indigo-400 transition-colors"
+                      />
+                    </div>
                     <SelectItem value="manage_categories" className="font-black text-indigo-600 italic border-b border-slate-100/50 pb-1.5">+ Gerenciar Categorias...</SelectItem>
-                    {serviceCategories.map(cat => (
-                      <SelectItem key={cat} value={cat} className="font-bold">{cat}</SelectItem>
-                    ))}
+                    {filteredCategories.length === 0 && categorySearch ? (
+                      <div className="py-2 px-3 text-xs text-slate-400 italic text-center">Nenhuma categoria encontrada</div>
+                    ) : (
+                      filteredCategories.map(cat => (
+                        <SelectItem key={cat} value={cat} className="font-bold">{cat}</SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -635,7 +677,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
         </form>
 
         {/* MODAL DE GERENCIAMENTO DE CATEGORIAS */}
-        <Dialog open={isCategoryManagerOpen} onOpenChange={setIsCategoryManagerOpen}>
+        <Dialog open={isCategoryManagerOpen} onOpenChange={(open) => { setIsCategoryManagerOpen(open); setEditingCategory(null); setNewCategoryName(''); }}>
           <DialogContent className="max-w-md p-6 bg-white border border-slate-100 rounded-3xl shadow-2xl z-[700]">
             <DialogHeader>
               <DialogTitle className="text-xl font-black italic uppercase text-slate-900 flex items-center gap-2">
@@ -643,7 +685,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
                 Gerenciar Categorias
               </DialogTitle>
               <p className="text-slate-500 text-xs mt-1">
-                Adicione novas categorias ou exclua as existentes. As alterações refletirão imediatamente.
+                Crie, edite ou exclua categorias. As alterações refletirão imediatamente.
               </p>
             </DialogHeader>
 
@@ -652,7 +694,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
               <div className="flex gap-2">
                 <Input
                   type="text"
-                  placeholder="Nome da categoria..."
+                  placeholder="Nome da nova categoria..."
                   value={newCategoryName}
                   onChange={(e) => setNewCategoryName(e.target.value)}
                   className="h-10 bg-slate-50 border-slate-100 rounded-xl font-bold"
@@ -666,46 +708,75 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
                 <Button
                   type="button"
                   onClick={handleAddCategory}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-black italic rounded-xl px-4 h-10 text-xs uppercase"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-black italic rounded-xl px-4 h-10 text-xs uppercase shrink-0"
                 >
                   + Adicionar
                 </Button>
               </div>
 
-              {/* Lista de Categorias */}
-              <div className="space-y-2 border border-slate-100 rounded-2xl p-4 bg-slate-50/50 max-h-[220px] overflow-y-auto">
+              {/* Lista de Categorias em Ordem Alfabética */}
+              <div className="space-y-2 border border-slate-100 rounded-2xl p-4 bg-slate-50/50 max-h-[260px] overflow-y-auto">
                 {serviceCategories.length === 0 ? (
                   <p className="text-center text-xs text-slate-400 font-bold italic">Nenhuma categoria cadastrada.</p>
                 ) : (
-                  serviceCategories.map((cat) => (
+                  [...serviceCategories].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })).map((cat) => (
                     <div
                       key={cat}
-                      className="flex items-center justify-between p-2.5 bg-white border border-slate-100 rounded-xl hover:border-slate-200 transition-all"
+                      className="flex items-center gap-2 p-2 bg-white border border-slate-100 rounded-xl hover:border-slate-200 transition-all"
                     >
-                      <span className="text-xs font-bold text-slate-700 capitalize">{cat}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveCategory(cat)}
-                        className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 transition-all"
-                        title="Excluir categoria"
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          className="w-4 h-4"
-                        >
-                          <path d="M3 6h18" />
-                          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                        </svg>
-                      </button>
+                      {editingCategory === cat ? (
+                        /* Modo de edição */
+                        <>
+                          <input
+                            type="text"
+                            value={editingCategoryValue}
+                            onChange={(e) => setEditingCategoryValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveEditCategory(cat);
+                              if (e.key === 'Escape') setEditingCategory(null);
+                            }}
+                            className="flex-1 h-7 px-2 text-xs font-bold bg-slate-50 border border-indigo-300 rounded-lg outline-none focus:border-indigo-500"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleSaveEditCategory(cat)}
+                            className="text-emerald-600 hover:text-emerald-700 p-1 rounded hover:bg-emerald-50 transition-all"
+                            title="Salvar"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingCategory(null)}
+                            className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-100 transition-all"
+                            title="Cancelar"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          </button>
+                        </>
+                      ) : (
+                        /* Modo de visualização */
+                        <>
+                          <span className="flex-1 text-xs font-bold text-slate-700 capitalize">{cat}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleStartEditCategory(cat)}
+                            className="text-indigo-500 hover:text-indigo-700 p-1 rounded hover:bg-indigo-50 transition-all"
+                            title="Editar categoria"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCategory(cat)}
+                            className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 transition-all"
+                            title="Excluir categoria"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                          </button>
+                        </>
+                      )}
                     </div>
                   ))
                 )}
@@ -715,7 +786,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
             <DialogFooter>
               <Button
                 type="button"
-                onClick={() => setIsCategoryManagerOpen(false)}
+                onClick={() => { setIsCategoryManagerOpen(false); setEditingCategory(null); }}
                 className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black italic rounded-xl h-11 text-xs uppercase"
               >
                 Fechar

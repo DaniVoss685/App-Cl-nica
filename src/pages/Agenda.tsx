@@ -43,6 +43,7 @@ import {
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { AppointmentModal } from '../components/AppointmentModal';
+import { PostponedTimersList } from '../components/PostponedTimersList';
 import { cn } from '../lib/utils';
 import { Badge } from '../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -271,6 +272,13 @@ export function Agenda() {
             </Button>
           </div>
 
+          <Button 
+            onClick={() => setSelectedDate(new Date())}
+            className="h-12 px-5 rounded-2xl font-bold border border-slate-200 bg-white text-indigo-600 hover:bg-indigo-50 shadow-sm text-xs italic uppercase tracking-wider cursor-pointer"
+          >
+            Hoje
+          </Button>
+
           {/* Professional filter */}
           <div className="flex items-center">
             <Select value={profFilter} onValueChange={setProfFilter}>
@@ -329,9 +337,10 @@ export function Agenda() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+      <div className="w-full">
+        <PostponedTimersList />
         {/* Main Calendar Space */}
-        <Card className="xl:col-span-3 bg-white border-slate-200 rounded-[2rem] shadow-sm overflow-hidden min-h-[850px] flex flex-col">
+        <Card className="w-full bg-white border-slate-200 rounded-[2rem] shadow-sm overflow-hidden min-h-[850px] flex flex-col">
           
           {/* DAILY VIEW (DIA) */}
           {viewMode === 'dia' && (
@@ -756,157 +765,6 @@ export function Agenda() {
             </div>
           )}
         </Card>
-
-        {/* SIDE BAR DASHBOARD */}
-        <div className="space-y-6">
-          
-          {/* Linked Returns Quick View Panel directly targeting patient returns list */}
-          <Card className="p-6 bg-slate-950 text-white border-none rounded-[2rem] shadow-xl relative overflow-hidden group">
-            <div className="absolute inset-0 bg-gradient-to-tr from-indigo-950/40 via-slate-950 to-slate-950 pointer-events-none" />
-            <div className="relative z-10 space-y-4">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-indigo-500/20 flex items-center justify-center text-indigo-400">
-                  <RefreshCcw className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-black italic uppercase tracking-tight text-white">Retornos da Semana</h3>
-                  <p className="text-[9px] text-indigo-300 font-bold uppercase tracking-wider">Monitoramento ativo de fidelização</p>
-                </div>
-              </div>
-
-              <div className="divide-y divide-white/5 space-y-2 max-h-[220px] overflow-y-auto no-scrollbar">
-                {appointments.filter(a => {
-                  const d = new Date(a.date + 'T12:00:00');
-                  return d >= weekDays[0] && d <= weekDays[6] && a.type === 'retorno';
-                }).map(appt => {
-                  const patient = patients.find(p => p.id === appt.patientId);
-                  const prof = professionals.find(p => p.id === appt.professionalId);
-                  return (
-                    <div key={appt.id} className="pt-2 flex items-center justify-between gap-2 text-left">
-                      <div>
-                        <p className="text-xs font-black italic color-white uppercase truncate text-indigo-200">{patient?.name}</p>
-                        <p className="text-[9px] text-slate-400 mt-0.5">
-                          {format(new Date(appt.date + 'T12:00:00'), 'dd/MM')} às {appt.startTime} • Prof: {prof?.name.split(' ')[0]}
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setSelectedDate(new Date(appt.date + 'T12:00:00'));
-                          setViewMode('dia');
-                        }}
-                        className="bg-white/10 hover:bg-white text-[9px] hover:text-slate-950 font-black tracking-widest uppercase h-7 px-2 rounded-lg"
-                      >
-                        Ir
-                      </Button>
-                    </div>
-                  );
-                })}
-                {appointments.filter(a => {
-                  const d = new Date(a.date + 'T12:00:00');
-                  return d >= weekDays[0] && d <= weekDays[6] && a.type === 'retorno';
-                }).length === 0 && (
-                  <p className="text-left py-4 text-slate-500 text-xs italic uppercase font-semibold">Nenhum retorno agendado para esta semana.</p>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          {/* Operational Pending Checklist */}
-          <Card className="p-6 bg-white border-slate-200 rounded-[2rem] shadow-sm">
-            <h3 className="font-black text-slate-900 italic mb-4 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-amber-500 animate-pulse" />
-              <span className="uppercase text-sm tracking-tight">Pendências Operacionais</span>
-            </h3>
-            <div className="space-y-3">
-              {appointments
-                .filter(a => a.date === format(new Date(), 'yyyy-MM-dd') && a.status === 'agendado')
-                .map(appt => {
-                  const patient = patients.find(p => p.id === appt.patientId);
-                  return (
-                    <div key={appt.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between gap-2 hover:bg-slate-100/50 transition-colors">
-                      <div>
-                        <p className="text-xs font-black italic text-slate-800 capitalize truncate max-w-[130px]">{patient?.name}</p>
-                        <p className="text-[10px] text-slate-500 font-mono mt-0.5 font-bold">{appt.startTime}</p>
-                      </div>
-                      <Badge className="bg-amber-100 text-amber-700 border-none text-[8px] font-black italic uppercase py-0.5 px-2">Aguardando</Badge>
-                    </div>
-                  );
-                })}
-              {appointments.filter(a => a.date === format(new Date(), 'yyyy-MM-dd') && a.status === 'agendado').length === 0 && (
-                <p className="text-center py-4 text-slate-400 text-xs italic uppercase font-bold tracking-widest">Tudo regularizado 👍</p>
-              )}
-            </div>
-          </Card>
-
-          {/* Status color legends mapped Premium */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.1, type: 'spring', stiffness: 100, damping: 15 }}
-          >
-            <Card className="p-6 bg-white border-slate-200 rounded-[2rem] shadow-sm overflow-hidden relative group">
-              <div className="absolute -top-10 -right-10 w-24 h-24 bg-indigo-50 rounded-full opacity-40 group-hover:scale-150 transition-transform duration-500 ease-out" />
-              <h3 className="font-black text-slate-900 italic mb-4 flex items-center gap-2 relative z-10 select-none uppercase text-sm tracking-tight">
-                <span className="relative flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-600"></span>
-                </span>
-                Legenda de Status
-              </h3>
-              <div className="grid grid-cols-2 gap-3 relative z-10">
-                <div className="flex items-center gap-2.5 p-2 bg-indigo-50/50 rounded-xl border border-indigo-100 select-none">
-                  <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 shrink-0" />
-                  <span className="text-[9px] font-black text-indigo-900 uppercase italic">Agendado</span>
-                </div>
-                <div className="flex items-center gap-2.5 p-2 bg-green-50 rounded-xl border border-green-100 select-none">
-                  <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
-                  <span className="text-[9px] font-black text-green-900 uppercase italic">Confirmado</span>
-                </div>
-                <div className="flex items-center gap-2.5 p-2 bg-cyan-50 rounded-xl border border-cyan-100 select-none">
-                  <div className="w-2.5 h-2.5 rounded-full bg-cyan-500 shrink-0" />
-                  <span className="text-[9px] font-black text-cyan-900 uppercase italic">Chegou</span>
-                </div>
-                <div className="flex items-center gap-2.5 p-2 bg-rose-55/15 bg-rose-50 rounded-xl border border-rose-100 select-none">
-                  <div className="w-2.5 h-2.5 rounded-full bg-red-400 shrink-0" />
-                  <span className="text-[9px] font-black text-red-900 uppercase italic">Cancelado</span>
-                </div>
-              </div>
-            </Card>
-          </motion.div>
-
-          {/* Financial summary card aligned correctly */}
-          <Card className="p-6 bg-indigo-600 rounded-[2rem] shadow-xl text-white">
-            <h3 className="font-black italic mb-4 flex items-center gap-2 tracking-tight uppercase text-sm">
-              <DollarSign className="w-5 h-5 text-indigo-200" />
-              Resumo Operacional Financeiro
-            </h3>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center bg-white/10 p-3 rounded-2xl border border-white/10">
-                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-100">Previsto do Período</span>
-                <span className="font-mono font-black italic block">
-                  R$ {filteredAppointments.filter(a => {
-                    const d = new Date(a.date + 'T12:00:00');
-                    if (viewMode === 'dia') return isSameDay(d, selectedDate);
-                    if (viewMode === 'semana') return d >= weekDays[0] && d <= weekDays[6];
-                    return d.getMonth() === selectedDate.getMonth();
-                  }).reduce((acc, a) => acc + (a.value || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-              </div>
-              <div className="flex justify-between items-center bg-white/10 p-3 rounded-2xl border border-white/10">
-                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-100">Total procedimentos</span>
-                <span className="font-black italic">
-                  {filteredAppointments.filter(a => {
-                    const d = new Date(a.date + 'T12:00:00');
-                    if (viewMode === 'dia') return isSameDay(d, selectedDate);
-                    if (viewMode === 'semana') return d >= weekDays[0] && d <= weekDays[6];
-                    return d.getMonth() === selectedDate.getMonth();
-                  }).length} atendimentos
-                </span>
-              </div>
-            </div>
-          </Card>
-        </div>
       </div>
 
       {/* Appointment Edit/Insert Modal */}

@@ -5,7 +5,7 @@ import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Calendar as CalendarIcon, Clock, UserCheck, AlertTriangle, Users, Stethoscope, DollarSign, Package, Sparkles } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, UserCheck, AlertTriangle, Users, Stethoscope, DollarSign, Package, Sparkles, RefreshCcw } from 'lucide-react';
 import { format, addDays, addMinutes } from 'date-fns';
 import { useStore } from '../store';
 import { cn } from '../lib/utils';
@@ -21,7 +21,14 @@ interface AppointmentModalProps {
 }
 
 export function AppointmentModal({ open, onOpenChange, appointmentId, initialDate, initialStartTime, onSuccess }: AppointmentModalProps) {
-  const { patients, professionals, appointments, services, packages, addAppointment, updateAppointment, inventory } = useStore();
+  const { patients, professionals, appointments, services, packages, addAppointment, updateAppointment, inventory, serviceCategories } = useStore();
+
+  const currentAppt = appointmentId ? appointments.find(a => a.id === appointmentId) : null;
+  const originalAppt = currentAppt && currentAppt.linkedToAppointmentId 
+    ? appointments.find(a => a.id === currentAppt.linkedToAppointmentId) 
+    : null;
+  const originalService = originalAppt ? services.find(s => s.id === originalAppt.serviceId) : null;
+  const originalProfessional = originalAppt ? professionals.find(p => p.id === originalAppt.professionalId) : null;
   
   const getInitialData = () => {
     if (appointmentId) {
@@ -79,6 +86,9 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
   const [validationError, setValidationError] = useState<string | null>(null);
   const [rescheduleData, setRescheduleData] = useState({ date: '', startTime: '', endTime: '' });
   const [customItemsUsed, setCustomItemsUsed] = useState<{ itemId: string; quantity: number }[]>([]);
+  const [showFollowUpConfirm, setShowFollowUpConfirm] = useState(false);
+  const [confirmedFollowUpDate, setConfirmedFollowUpDate] = useState('');
+  const [isPaymentRecorded, setIsPaymentRecorded] = useState(false);
 
   // Pre-populate customItemsUsed whenever the selected service changes or modal data loads
   useEffect(() => {
@@ -111,6 +121,8 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
       setShowRescheduleExistingDialog(false);
       setConflictingAppointment(null);
       setBulkSchedule(false);
+      const alreadyPaid = data.paymentStatus === 'pago' || data.paymentStatus === 'parcial' || !!data.paymentMethod || (data.value !== undefined && data.value > 0);
+      setIsPaymentRecorded(alreadyPaid);
     }
   }, [open, appointmentId, initialDate, initialStartTime]);
 
@@ -197,6 +209,20 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
 
   const saveAppointment = () => {
     const selectedPkg = packages.find(p => p.id === formData.packageId);
+    const selectedService = services.find(s => s.id === formData.serviceId);
+
+    // Interceptação para confirmação de retorno na criação (quando não estiver editando e for serviço com retorno)
+    if (!appointmentId && selectedService && selectedService.generatesFollowUp && selectedService.followUpDays && !showFollowUpConfirm) {
+      const [year, month, day] = formData.date.split('-').map(Number);
+      const baseDate = new Date(year, month - 1, day);
+      const futureDate = addDays(baseDate, selectedService.followUpDays);
+      setConfirmedFollowUpDate(format(futureDate, 'yyyy-MM-dd'));
+      setShowFollowUpConfirm(true);
+      return;
+    }
+
+    const finalPaymentStatus = isPaymentRecorded ? formData.paymentStatus : 'pendente';
+    const finalPaymentMethod = isPaymentRecorded ? (formData.paymentMethod || undefined) as any : undefined;
 
     if (appointmentId) {
       updateAppointment(appointmentId, {
@@ -210,8 +236,8 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
         type: formData.type as any,
         confirmationStatus: formData.confirmationStatus,
         value: formData.value || 0,
-        paymentStatus: formData.paymentStatus,
-        paymentMethod: (formData.paymentMethod || undefined) as any,
+        paymentStatus: finalPaymentStatus,
+        paymentMethod: finalPaymentMethod,
         notes: formData.notes,
         status: formData.status as any,
         customItemCostsUsed: customItemsUsed,
@@ -238,8 +264,8 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
           customItemCostsUsed: customItemsUsed,
           confirmationStatus: formData.confirmationStatus,
           value: i === 0 ? (formData.value || 0) : 0, 
-          paymentStatus: formData.paymentStatus,
-          paymentMethod: (formData.paymentMethod || undefined) as any,
+          paymentStatus: finalPaymentStatus,
+          paymentMethod: finalPaymentMethod,
           notes: i === 0 ? formData.notes : `Sessão ${i + 1}/${selectedPkg.totalSessions} do pacote ${selectedPkg.name}${formData.notes ? ` - ${formData.notes}` : ''}`,
           isCaseStudy: formData.isCaseStudy,
           upfrontPaid: i === 0 ? formData.upfrontPaid : false,
@@ -261,8 +287,8 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
         customItemCostsUsed: customItemsUsed,
         confirmationStatus: formData.confirmationStatus,
         value: formData.value || 0,
-        paymentStatus: formData.paymentStatus,
-        paymentMethod: (formData.paymentMethod || undefined) as any,
+        paymentStatus: finalPaymentStatus,
+        paymentMethod: finalPaymentMethod,
         notes: formData.notes,
         isCaseStudy: formData.isCaseStudy,
         upfrontPaid: formData.upfrontPaid,
@@ -271,7 +297,6 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
     }
 
     let returnDateString: string | null = null;
-    const selectedService = services.find(s => s.id === formData.serviceId);
     if (selectedService && selectedService.generatesFollowUp && selectedService.followUpDays) {
       const [year, month, day] = formData.date.split('-').map(Number);
       const baseDate = new Date(year, month - 1, day);
@@ -280,6 +305,130 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
     }
 
     if (onSuccess) onSuccess(returnDateString);
+    onOpenChange(false);
+  };
+
+  const handleConfirmFollowUp = () => {
+    const selectedPkg = packages.find(p => p.id === formData.packageId);
+    const finalPaymentStatus = isPaymentRecorded ? formData.paymentStatus : 'pendente';
+    const finalPaymentMethod = isPaymentRecorded ? (formData.paymentMethod || undefined) as any : undefined;
+
+    if (bulkSchedule && selectedPkg && selectedPkg.totalSessions > 1 && selectedPkg.sessionInterval) {
+      const [year, month, day] = formData.date.split('-').map(Number);
+      let startDate = new Date(year, month - 1, day);
+      
+      for (let i = 0; i < selectedPkg.totalSessions; i++) {
+        const dateStr = format(startDate, 'yyyy-MM-dd');
+        addAppointment({
+          patientId: formData.patientId,
+          professionalId: formData.professionalId,
+          serviceId: formData.serviceId === 'none' ? undefined : formData.serviceId,
+          packageId: selectedPkg.id,
+          date: dateStr,
+          startTime: formData.startTime,
+          endTime: formData.endTime,
+          type: 'sessão',
+          status: formData.status as any || 'agendado',
+          customItemCostsUsed: customItemsUsed,
+          confirmationStatus: formData.confirmationStatus,
+          value: i === 0 ? (formData.value || 0) : 0, 
+          paymentStatus: finalPaymentStatus,
+          paymentMethod: finalPaymentMethod,
+          notes: i === 0 ? formData.notes : `Sessão ${i + 1}/${selectedPkg.totalSessions} do pacote ${selectedPkg.name}${formData.notes ? ` - ${formData.notes}` : ''}`,
+          isCaseStudy: formData.isCaseStudy,
+          upfrontPaid: i === 0 ? formData.upfrontPaid : false,
+          upfrontPaidAmount: i === 0 ? formData.upfrontPaidAmount : 0
+        }, i === 0 ? confirmedFollowUpDate : 'none');
+        startDate = addDays(startDate, selectedPkg.sessionInterval);
+      }
+    } else {
+      addAppointment({
+        patientId: formData.patientId,
+        professionalId: formData.professionalId,
+        serviceId: formData.serviceId === 'none' ? undefined : formData.serviceId,
+        packageId: formData.packageId === 'none' ? undefined : formData.packageId,
+        date: formData.date,
+        startTime: formData.startTime,
+        endTime: formData.endTime,
+        type: formData.type as any,
+        status: formData.status as any || 'agendado',
+        customItemCostsUsed: customItemsUsed,
+        confirmationStatus: formData.confirmationStatus,
+        value: formData.value || 0,
+        paymentStatus: finalPaymentStatus,
+        paymentMethod: finalPaymentMethod,
+        notes: formData.notes,
+        isCaseStudy: formData.isCaseStudy,
+        upfrontPaid: formData.upfrontPaid,
+        upfrontPaidAmount: formData.upfrontPaidAmount
+      }, confirmedFollowUpDate);
+    }
+
+    if (onSuccess) {
+      onSuccess(format(new Date(confirmedFollowUpDate + 'T12:00:00'), 'dd/MM/yyyy'));
+    }
+    setShowFollowUpConfirm(false);
+    onOpenChange(false);
+  };
+
+  const handleSkipFollowUp = () => {
+    const selectedPkg = packages.find(p => p.id === formData.packageId);
+    const finalPaymentStatus = isPaymentRecorded ? formData.paymentStatus : 'pendente';
+    const finalPaymentMethod = isPaymentRecorded ? (formData.paymentMethod || undefined) as any : undefined;
+
+    if (bulkSchedule && selectedPkg && selectedPkg.totalSessions > 1 && selectedPkg.sessionInterval) {
+      const [year, month, day] = formData.date.split('-').map(Number);
+      let startDate = new Date(year, month - 1, day);
+      
+      for (let i = 0; i < selectedPkg.totalSessions; i++) {
+        const dateStr = format(startDate, 'yyyy-MM-dd');
+        addAppointment({
+          patientId: formData.patientId,
+          professionalId: formData.professionalId,
+          serviceId: formData.serviceId === 'none' ? undefined : formData.serviceId,
+          packageId: selectedPkg.id,
+          date: dateStr,
+          startTime: formData.startTime,
+          endTime: formData.endTime,
+          type: 'sessão',
+          status: formData.status as any || 'agendado',
+          customItemCostsUsed: customItemsUsed,
+          confirmationStatus: formData.confirmationStatus,
+          value: i === 0 ? (formData.value || 0) : 0, 
+          paymentStatus: finalPaymentStatus,
+          paymentMethod: finalPaymentMethod,
+          notes: i === 0 ? formData.notes : `Sessão ${i + 1}/${selectedPkg.totalSessions} do pacote ${selectedPkg.name}${formData.notes ? ` - ${formData.notes}` : ''}`,
+          isCaseStudy: formData.isCaseStudy,
+          upfrontPaid: i === 0 ? formData.upfrontPaid : false,
+          upfrontPaidAmount: i === 0 ? formData.upfrontPaidAmount : 0
+        }, 'none');
+        startDate = addDays(startDate, selectedPkg.sessionInterval);
+      }
+    } else {
+      addAppointment({
+        patientId: formData.patientId,
+        professionalId: formData.professionalId,
+        serviceId: formData.serviceId === 'none' ? undefined : formData.serviceId,
+        packageId: formData.packageId === 'none' ? undefined : formData.packageId,
+        date: formData.date,
+        startTime: formData.startTime,
+        endTime: formData.endTime,
+        type: formData.type as any,
+        status: formData.status as any || 'agendado',
+        customItemCostsUsed: customItemsUsed,
+        confirmationStatus: formData.confirmationStatus,
+        value: formData.value || 0,
+        paymentStatus: finalPaymentStatus,
+        paymentMethod: finalPaymentMethod,
+        notes: formData.notes,
+        isCaseStudy: formData.isCaseStudy,
+        upfrontPaid: formData.upfrontPaid,
+        upfrontPaidAmount: formData.upfrontPaidAmount
+      }, 'none');
+    }
+
+    if (onSuccess) onSuccess(null);
+    setShowFollowUpConfirm(false);
     onOpenChange(false);
   };
 
@@ -310,8 +459,17 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
       setValidationError('Por favor, selecione um profissional.');
       return;
     }
+    if (formData.serviceId === 'none' && formData.packageId === 'none') {
+      setValidationError('Por favor, selecione um serviço/procedimento ou um pacote associado.');
+      return;
+    }
     if (!formData.startTime || !formData.endTime) {
       setValidationError('Por favor, preencha os horários de início e fim.');
+      return;
+    }
+
+    if ((formData.status === 'realizado' || formData.status === 'finalizado') && !formData.notes.trim()) {
+      setValidationError('Por favor, preencha o diagnóstico / notas clínicas no Passo 5 para concluir este agendamento.');
       return;
     }
 
@@ -389,6 +547,44 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto p-10">
             <div className="w-full max-w-7xl mx-auto space-y-10">
+              
+              {/* Banner informativo de Retorno Vinculado */}
+              {originalAppt && (
+                <div className="p-5 bg-indigo-50/50 border-2 border-dashed border-indigo-200 rounded-[2rem] flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-200">
+                  <div className="flex items-start gap-4">
+                    <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black italic text-sm shrink-0 shadow-md">
+                      🔄
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-black text-indigo-950 italic uppercase tracking-wider">Retorno Vinculado</h4>
+                      <p className="text-xs text-indigo-750 font-bold leading-normal">
+                        Este agendamento é o retorno oficial do procedimento de{" "}
+                        <strong className="text-indigo-900 capitalize font-extrabold">
+                          {originalService?.name || "Procedimento Geral"}
+                        </strong>{" "}
+                        realizado em{" "}
+                        <strong className="text-indigo-900 font-extrabold">
+                          {format(new Date(originalAppt.date + 'T12:00:00'), 'dd/MM/yyyy')}
+                        </strong>{" "}
+                        às <strong className="text-indigo-900 font-extrabold">{originalAppt.startTime}</strong> com o profissional{" "}
+                        <strong className="text-indigo-900 font-extrabold">Dr(a). {originalProfessional?.name || "Clínica"}</strong>.
+                      </p>
+                    </div>
+                  </div>
+
+                  {originalAppt.notes && (
+                    <div className="bg-white/80 border border-indigo-150 p-4 rounded-2xl space-y-1.5 shadow-sm">
+                      <span className="text-[10px] text-indigo-950 font-black uppercase tracking-wider block italic flex items-center gap-1 font-sans">
+                        📋 diagnóstico / evolução clínica anterior:
+                      </span>
+                      <p className="text-xs text-indigo-900 font-bold italic whitespace-pre-wrap leading-relaxed">
+                        "{originalAppt.notes}"
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* SEQUÊNCIA DO AGENDAMENTO (DA ESQUERDA PARA A DIREITA) */}
                 
@@ -420,76 +616,74 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
+                      <div className={cn(appointmentId ? "col-span-1" : "col-span-2", "space-y-2")}>
                         <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Tipo Consulta</Label>
                         <Select value={formData.type} onValueChange={(v: any) => setFormData({...formData, type: v})}>
                           <SelectTrigger className="h-12 border-slate-200 bg-white font-bold w-full rounded-xl">
                             <SelectValue placeholder="Selecione o tipo">
-                              {formData.type === 'consulta' ? 'Consulta' :
-                               formData.type === 'avaliação' ? 'Avaliação' :
-                               formData.type === 'retorno' ? 'Retorno' :
-                               formData.type === 'sessão' ? 'Sessão' :
-                               formData.type === 'acompanhamento' ? 'Acompanhamento' : formData.type}
+                              {formData.type || 'Selecione o tipo'}
                             </SelectValue>
                           </SelectTrigger>
                           <SelectContent className="z-[5000]">
-                            <SelectItem value="consulta" className="italic font-bold">Consulta</SelectItem>
-                            <SelectItem value="avaliação" className="italic font-bold">Avaliação</SelectItem>
-                            <SelectItem value="retorno" className="italic font-bold">Retorno</SelectItem>
-                            <SelectItem value="sessão" className="italic font-bold">Sessão</SelectItem>
-                            <SelectItem value="acompanhamento" className="italic font-bold">Acompanhamento</SelectItem>
+                            {(serviceCategories.length > 0 ? [...serviceCategories].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })) : ['consulta', 'avaliação', 'retorno', 'sessão', 'acompanhamento']).map(cat => (
+                              <SelectItem key={cat} value={cat} className="italic font-bold capitalize">{cat}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
 
-                      <div className="space-y-2">
-                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Status Confirmação</Label>
-                        <Select value={formData.confirmationStatus} onValueChange={(v: any) => setFormData({...formData, confirmationStatus: v})}>
+                      {appointmentId && (
+                        <div className="space-y-2">
+                          <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Status Confirmação</Label>
+                          <Select value={formData.confirmationStatus} onValueChange={(v: any) => setFormData({...formData, confirmationStatus: v})}>
+                            <SelectTrigger className="h-12 border-slate-200 bg-white font-bold w-full rounded-xl">
+                              <SelectValue placeholder="Status...">
+                                {formData.confirmationStatus === 'pendente' ? 'Pendente' :
+                                 formData.confirmationStatus === 'mensagem enviada' ? 'Mensagem Enviada' :
+                                 formData.confirmationStatus === 'confirmado' ? 'Confirmado' :
+                                 formData.confirmationStatus === 'cancelado' ? 'Recusado/Cancelado' : formData.confirmationStatus}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent className="z-[5000]">
+                              <SelectItem value="pendente" className="italic font-bold">Pendente</SelectItem>
+                              <SelectItem value="mensagem enviada" className="italic font-bold">Mensagem Enviada</SelectItem>
+                              <SelectItem value="confirmado" className="italic font-bold">Confirmado</SelectItem>
+                              <SelectItem value="cancelado" className="italic font-bold">Recusado/Cancelado</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+
+                    {appointmentId && (
+                      <div className="space-y-2 pt-2 border-t border-slate-100/50">
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Status do Atendimento</Label>
+                        <Select value={formData.status} onValueChange={(v: any) => setFormData({...formData, status: v})}>
                           <SelectTrigger className="h-12 border-slate-200 bg-white font-bold w-full rounded-xl">
-                            <SelectValue placeholder="Status...">
-                              {formData.confirmationStatus === 'pendente' ? 'Pendente' :
-                               formData.confirmationStatus === 'mensagem enviada' ? 'Mensagem Enviada' :
-                               formData.confirmationStatus === 'confirmado' ? 'Confirmado' :
-                               formData.confirmationStatus === 'cancelado' ? 'Recusado/Cancelado' : formData.confirmationStatus}
+                            <SelectValue placeholder="Selecione o status do atendimento">
+                              {formData.status === 'agendado' ? '🗓️ Agendado' :
+                               formData.status === 'confirmado' ? '✅ Confirmado' :
+                               formData.status === 'chegou' ? '⏳ Chegou / Em sala de espera' :
+                               formData.status === 'atrasado' ? '⚠️ Atrasado' :
+                               formData.status === 'realizado' ? '🩺 Finalizado / Realizado' :
+                               formData.status === 'finalizado' ? '🔒 Concluído' :
+                               formData.status === 'faltou' ? '❌ Faltou' :
+                               formData.status === 'cancelado' ? '🚫 Cancelado' : formData.status}
                             </SelectValue>
                           </SelectTrigger>
                           <SelectContent className="z-[5000]">
-                            <SelectItem value="pendente" className="italic font-bold">Pendente</SelectItem>
-                            <SelectItem value="mensagem enviada" className="italic font-bold">Mensagem Enviada</SelectItem>
-                            <SelectItem value="confirmado" className="italic font-bold">Confirmado</SelectItem>
-                            <SelectItem value="cancelado" className="italic font-bold">Recusado/Cancelado</SelectItem>
+                            <SelectItem value="agendado" className="italic font-bold">🗓️ Agendado</SelectItem>
+                            <SelectItem value="confirmado" className="italic font-bold">✅ Confirmado</SelectItem>
+                            <SelectItem value="chegou" className="italic font-bold">⏳ Chegou / Em Espera</SelectItem>
+                            <SelectItem value="atrasado" className="italic font-bold">⚠️ Atrasado</SelectItem>
+                            <SelectItem value="realizado" className="italic font-bold text-indigo-650">🩺 Finalizado / Realizado (Deduz Estoque)</SelectItem>
+                            <SelectItem value="finalizado" className="italic font-semibold text-green-600">🔒 Concluído</SelectItem>
+                            <SelectItem value="faltou" className="italic font-bold">❌ Faltou</SelectItem>
+                            <SelectItem value="cancelado" className="italic font-bold">🚫 Cancelado</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
-                    </div>
-
-                    <div className="space-y-2 pt-2 border-t border-slate-100/50">
-                      <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Status do Atendimento</Label>
-                      <Select value={formData.status} onValueChange={(v: any) => setFormData({...formData, status: v})}>
-                        <SelectTrigger className="h-12 border-slate-200 bg-white font-bold w-full rounded-xl">
-                          <SelectValue placeholder="Selecione o status do atendimento">
-                            {formData.status === 'agendado' ? '🗓️ Agendado' :
-                             formData.status === 'confirmado' ? '✅ Confirmado' :
-                             formData.status === 'chegou' ? '⏳ Chegou / Em sala de espera' :
-                             formData.status === 'atrasado' ? '⚠️ Atrasado' :
-                             formData.status === 'realizado' ? '🩺 Finalizado / Realizado' :
-                             formData.status === 'finalizado' ? '🔒 Concluído' :
-                             formData.status === 'faltou' ? '❌ Faltou' :
-                             formData.status === 'cancelado' ? '🚫 Cancelado' : formData.status}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="z-[5000]">
-                          <SelectItem value="agendado" className="italic font-bold">🗓️ Agendado</SelectItem>
-                          <SelectItem value="confirmado" className="italic font-bold">✅ Confirmado</SelectItem>
-                          <SelectItem value="chegou" className="italic font-bold">⏳ Chegou / Em Espera</SelectItem>
-                          <SelectItem value="atrasado" className="italic font-bold">⚠️ Atrasado</SelectItem>
-                          <SelectItem value="realizado" className="italic font-bold text-indigo-650">🩺 Finalizado / Realizado (Deduz Estoque)</SelectItem>
-                          <SelectItem value="finalizado" className="italic font-semibold text-green-600">🔒 Concluído</SelectItem>
-                          <SelectItem value="faltou" className="italic font-bold">❌ Faltou</SelectItem>
-                          <SelectItem value="cancelado" className="italic font-bold">🚫 Cancelado</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    )}
                   </div>
 
                   {/* PASSO 2: Profissional, Serviço & Pacote */}
@@ -503,7 +697,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Profissional Responsável</Label>
+                      <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Profissional Responsável <span className="text-red-500">*</span></Label>
                       <Select value={formData.professionalId} onValueChange={(v) => setFormData({...formData, professionalId: v})}>
                         <SelectTrigger className="h-12 border-slate-200 bg-white hover:bg-slate-50/50 transition-colors font-bold w-full rounded-xl">
                           <SelectValue placeholder="Selecione o profissional">
@@ -518,7 +712,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Serviço / Procedimento</Label>
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Serviço / Procedimento <span className="text-red-500">*</span></Label>
                         <Select value={formData.serviceId} onValueChange={handleServiceChange}>
                           <SelectTrigger className="h-12 border-slate-200 bg-white hover:bg-slate-50/50 transition-colors font-bold w-full rounded-xl">
                             <SelectValue placeholder="Nenhum serviço">
@@ -577,17 +771,17 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="space-y-2 md:col-span-1">
-                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Data Atendimento</Label>
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Data Atendimento <span className="text-red-500">*</span></Label>
                         <Input className="h-12 border-slate-200 bg-white font-bold rounded-xl" type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} required />
                       </div>
 
                       <div className="space-y-2">
-                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Início</Label>
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Início <span className="text-red-500">*</span></Label>
                         <Input className="h-12 border-slate-200 bg-white font-mono font-bold rounded-xl" type="time" value={formData.startTime} onChange={e => handleStartTimeChange(e.target.value)} required />
                       </div>
                       
                       <div className="space-y-2">
-                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Previsão Fim</Label>
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Previsão Fim <span className="text-red-500">*</span></Label>
                         <Input className="h-12 border-slate-200 bg-white font-mono font-bold rounded-xl" type="time" value={formData.endTime} onChange={e => setFormData({...formData, endTime: e.target.value})} required />
                       </div>
                     </div>
@@ -625,59 +819,76 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                       <span className="w-7 h-7 bg-indigo-600 text-white rounded-full flex items-center justify-center font-black italic text-xs">4</span>
                       <h3 className="text-indigo-950 font-black text-sm uppercase tracking-wider italic flex items-center gap-1.5 font-sans">
                         <DollarSign className="w-4 h-4 text-indigo-600" />
-                        Ajuste de Valores & Pagamento
+                        Ajuste de Valores & Pagamento (Opcional)
                       </h3>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Valor Cobrado (R$)</Label>
-                        <div className="relative">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">R$</span>
-                          <Input 
-                            className="h-12 border-slate-200 bg-white pl-10 text-lg font-black italic rounded-xl" 
-                            placeholder="0,00"
-                            value={displayValue} 
-                            onChange={handleValueChange} 
-                          />
+                    <div className="flex items-center justify-between p-4 bg-white border border-slate-200/80 rounded-2xl select-none">
+                      <div className="space-y-0.5">
+                        <span className="text-slate-900 font-bold text-xs uppercase italic tracking-wide block">Registrar pagamento do paciente agora?</span>
+                        <span className="text-[10px] text-slate-500 font-bold leading-normal block">Marque se o pagamento já foi efetuado ou parcial.</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={isPaymentRecorded}
+                        onChange={(e) => setIsPaymentRecorded(e.target.checked)}
+                        className="w-5 h-5 text-indigo-650 border-slate-350 rounded focus:ring-indigo-500 cursor-pointer"
+                      />
+                    </div>
+
+                    {isPaymentRecorded && (
+                      <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-200">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Valor Cobrado (R$)</Label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">R$</span>
+                              <Input 
+                                className="h-12 border-slate-200 bg-white pl-10 text-lg font-black italic rounded-xl" 
+                                placeholder="0,00"
+                                value={displayValue} 
+                                onChange={handleValueChange} 
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Status do Pagamento</Label>
+                            <Select value={formData.paymentStatus} onValueChange={(v) => setFormData({...formData, paymentStatus: v as any})}>
+                              <SelectTrigger className="h-12 border-slate-200 bg-white font-bold w-full rounded-xl">
+                                <SelectValue placeholder="Pagamento...">
+                                  {formData.paymentStatus === 'pendente' ? 'Aguardando Pagamento' :
+                                   formData.paymentStatus === 'pago' ? 'Pago Inteiro' :
+                                   formData.paymentStatus === 'parcial' ? 'Pago Parcialmente' : formData.paymentStatus}
+                                </SelectValue>
+                              </SelectTrigger>
+                              <SelectContent className="z-[5000]">
+                                <SelectItem value="pendente" className="italic font-bold">Aguardando Pagamento</SelectItem>
+                                <SelectItem value="pago" className="italic font-bold">Pago Inteiro</SelectItem>
+                                <SelectItem value="parcial" className="italic font-bold">Pago Parcialmente</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Forma de Pagamento</Label>
+                          <Select value={formData.paymentMethod} onValueChange={(v) => setFormData({...formData, paymentMethod: v as any})}>
+                            <SelectTrigger className="h-12 border-slate-200 bg-white font-bold w-full rounded-xl">
+                              <SelectValue placeholder="Selecione...">
+                                {formData.paymentMethod || 'Selecione...'}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent className="z-[5000]">
+                              <SelectItem value="Pix" className="italic font-bold">Pix</SelectItem>
+                              <SelectItem value="Cartão de Crédito" className="italic font-bold">Cartão de Crédito</SelectItem>
+                              <SelectItem value="Dinheiro" className="italic font-bold">Dinheiro</SelectItem>
+                              <SelectItem value="Boleto" className="italic font-bold">Boleto</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
-
-                      <div className="space-y-2">
-                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Status do Pagamento</Label>
-                        <Select value={formData.paymentStatus} onValueChange={(v) => setFormData({...formData, paymentStatus: v as any})}>
-                          <SelectTrigger className="h-12 border-slate-200 bg-white font-bold w-full rounded-xl">
-                            <SelectValue placeholder="Pagamento...">
-                              {formData.paymentStatus === 'pendente' ? 'Aguardando Pagamento' :
-                               formData.paymentStatus === 'pago' ? 'Pago Inteiro' :
-                               formData.paymentStatus === 'parcial' ? 'Pago Parcialmente' : formData.paymentStatus}
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent className="z-[5000]">
-                            <SelectItem value="pendente" className="italic font-bold">Aguardando Pagamento</SelectItem>
-                            <SelectItem value="pago" className="italic font-bold">Pago Inteiro</SelectItem>
-                            <SelectItem value="parcial" className="italic font-bold">Pago Parcialmente</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Forma de Pagamento</Label>
-                      <Select value={formData.paymentMethod} onValueChange={(v) => setFormData({...formData, paymentMethod: v as any})}>
-                        <SelectTrigger className="h-12 border-slate-200 bg-white font-bold w-full rounded-xl">
-                          <SelectValue placeholder="Selecione...">
-                            {formData.paymentMethod || 'Selecione...'}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="z-[5000]">
-                          <SelectItem value="Pix" className="italic font-bold">Pix</SelectItem>
-                          <SelectItem value="Cartão de Crédito" className="italic font-bold">Cartão de Crédito</SelectItem>
-                          <SelectItem value="Dinheiro" className="italic font-bold">Dinheiro</SelectItem>
-                          <SelectItem value="Boleto" className="italic font-bold">Boleto</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    )}
 
                     {/* DYNAMIC UPFRONT PAYMENT CALCULATION & REQUIREMENT ZONE */}
                     {(() => {
@@ -831,10 +1042,23 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Anotações Gerais do Agendamento</Label>
+                      <Label className={cn(
+                        "font-bold italic text-xs uppercase tracking-wider flex items-center gap-1.5",
+                        (formData.status === 'realizado' || formData.status === 'finalizado') ? "text-red-600" : "text-slate-700"
+                      )}>
+                        Diagnóstico / Evolução Clínica
+                        {(formData.status === 'realizado' || formData.status === 'finalizado') && (
+                          <span className="text-red-500 font-extrabold">* (Obrigatório para Conclusão)</span>
+                        )}
+                      </Label>
                       <textarea 
-                        className="w-full min-h-[140px] p-4 bg-white border border-slate-200 rounded-xl font-medium text-slate-700 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 transition-all resize-none"
-                        placeholder="Exame físico programado, recomendações, avisos, etc..."
+                        className={cn(
+                          "w-full min-h-[140px] p-4 bg-white border rounded-xl font-medium text-slate-700 text-sm focus-visible:outline-none focus-visible:ring-2 transition-all resize-none",
+                          (formData.status === 'realizado' || formData.status === 'finalizado') && !formData.notes.trim()
+                            ? "border-red-300 focus-visible:ring-red-500 bg-red-50/20"
+                            : "border-slate-200 focus-visible:ring-indigo-500"
+                        )}
+                        placeholder={(formData.status === 'realizado' || formData.status === 'finalizado') ? "Descreva a conclusão deste caso, procedimentos realizados, estado do paciente e o que fazer no retorno..." : "Exame físico programado, recomendações, avisos, etc..."}
                         value={formData.notes || ''}
                         onChange={e => setFormData({...formData, notes: e.target.value})}
                       />
@@ -1053,6 +1277,58 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
              >
                Voltar
              </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Confirm Automatic Follow-Up Appointment Modal */}
+    <Dialog open={showFollowUpConfirm} onOpenChange={setShowFollowUpConfirm}>
+      <DialogContent className="max-w-md p-0 overflow-hidden border-none shadow-2xl rounded-[2rem] bg-indigo-950 text-white z-[6000]">
+        <div className="p-8 space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center">
+              <RefreshCcw className="w-6 h-6 text-indigo-300 animate-spin-slow" />
+            </div>
+            <div>
+              <DialogTitle className="text-xl font-black italic uppercase tracking-wider text-white">Confirmar Retorno</DialogTitle>
+              <DialogDescription className="text-indigo-200 mt-1 font-semibold text-xs lowercase">
+                este procedimento exige um retorno pós-atendimento.
+              </DialogDescription>
+            </div>
+          </div>
+
+          <div className="space-y-4 bg-white/5 border border-white/10 p-5 rounded-2xl">
+            <p className="text-xs font-bold leading-relaxed text-indigo-100">
+              O procedimento <strong className="text-white capitalize">{services.find(s => s.id === formData.serviceId)?.name}</strong> está configurado para gerar um retorno automático após <strong className="text-white">{services.find(s => s.id === formData.serviceId)?.followUpDays} dias</strong>.
+            </p>
+            <div className="space-y-2">
+              <Label className="text-[10px] text-indigo-300 font-black uppercase tracking-widest block italic">Confirmar data do retorno:</Label>
+              <Input 
+                type="date" 
+                className="h-12 bg-white/10 border-white/20 text-white font-bold rounded-xl focus:ring-indigo-500" 
+                value={confirmedFollowUpDate} 
+                onChange={e => setConfirmedFollowUpDate(e.target.value)} 
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Button 
+              type="button"
+              onClick={handleConfirmFollowUp}
+              className="w-full h-12 bg-white text-indigo-950 hover:bg-indigo-50 font-black italic rounded-xl text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all"
+            >
+              Confirmar e Agendar Retorno
+            </Button>
+            <Button 
+              type="button"
+              variant="ghost"
+              onClick={handleSkipFollowUp}
+              className="w-full h-12 text-indigo-300 hover:text-white hover:bg-white/5 font-bold italic rounded-xl text-xs uppercase tracking-wider"
+            >
+              Não agendar retorno por enquanto
+            </Button>
           </div>
         </div>
       </DialogContent>

@@ -2,12 +2,14 @@ import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { Outlet } from 'react-router-dom';
 import { GlobalArrivalModal } from '../modals/GlobalArrivalModal';
+import { GlobalCheckoutModal } from '../modals/GlobalCheckoutModal';
 import { OnboardingTour } from '../OnboardingTour';
 
 export function AppLayout() {
   return (
     <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-900 overflow-hidden">
       <GlobalArrivalModal />
+      <GlobalCheckoutModal />
       <OnboardingTour />
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">

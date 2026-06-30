@@ -1,4 +1,4 @@
-import { LayoutDashboard, CalendarDays, Users, Stethoscope, Package, Clock, DollarSign, Sparkles, PieChart, Users2, Settings, HelpCircle, Target, FileText, ClipboardList, ChevronLeft, ChevronRight, MessageSquare, Calculator, Globe } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Users, Stethoscope, Package, Clock, DollarSign, Sparkles, PieChart, Users2, Settings, HelpCircle, Target, FileText, ClipboardList, ChevronLeft, ChevronRight, MessageSquare, Calculator, Globe, CheckSquare } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { useStore } from '../../store';
@@ -8,21 +8,22 @@ import { motion, AnimatePresence } from 'motion/react';
 const principalNavigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Agenda', href: '/agenda', icon: CalendarDays },
+  { name: 'Confirmações', href: '/confirmacoes', icon: CheckSquare, badgeKey: 'confirmacoes' },
+  { name: 'Retornos', href: '/retornos', icon: Clock },
+  { name: 'Prontuários', href: '/prontuarios', icon: ClipboardList },
+  { name: 'Documentos', href: '/documentos', icon: FileText },
   { name: 'Pacientes', href: '/pacientes', icon: Users },
-  { name: 'Agendamento Online', href: '/agendamento-online', icon: Globe },
-  { name: 'Comercial / CRM', href: '/comercial', icon: Target },
   { name: 'WhatsApp', href: '/whatsapp', icon: MessageSquare },
-  { name: 'Financeiro', href: '/financeiro', icon: DollarSign },
-  { name: 'Custos e Preços', href: '/custos', icon: Calculator },
-  { name: 'IA Inteligente', href: '/financeiro?tab=inteligencia', icon: Sparkles, color: 'text-indigo-500' },
 ];
 
 const operacaoNavigation = [
   { name: 'Serviços', href: '/servicos', icon: Stethoscope },
   { name: 'Pacotes', href: '/pacotes', icon: Package },
-  { name: 'Retornos', href: '/retornos', icon: Clock },
-  { name: 'Prontuários', href: '/prontuarios', icon: ClipboardList },
-  { name: 'Documentos', href: '/documentos', icon: FileText },
+  { name: 'Financeiro', href: '/financeiro', icon: DollarSign },
+  { name: 'Custos e Preços', href: '/custos', icon: Calculator },
+  { name: 'Agendamento Online', href: '/agendamento-online', icon: Globe },
+  { name: 'Comercial / CRM', href: '/comercial', icon: Target },
+  { name: 'IA Inteligente', href: '/financeiro?tab=inteligencia', icon: Sparkles, color: 'text-indigo-500' },
 ];
 
 const gestaoNavigation = [
@@ -33,7 +34,7 @@ const gestaoNavigation = [
   { name: 'Guia de Implantação', href: '/guia', icon: HelpCircle },
 ];
 
-const NavItem = ({ item, isCollapsed, pathname, search, unresolvedInsights }: { item: any, isCollapsed: boolean, pathname: string, search: string, unresolvedInsights: number }) => {
+const NavItem = ({ item, isCollapsed, pathname, search, unresolvedInsights, pendingConfirmations }: { item: any, isCollapsed: boolean, pathname: string, search: string, unresolvedInsights: number, pendingConfirmations: number }) => {
   const isActive = useMemo(() => {
     // If the sidebar item URL has tab params
     const tabMatch = item.href.match(/[?&]tab=([^&]+)/);
@@ -78,6 +79,14 @@ const NavItem = ({ item, isCollapsed, pathname, search, unresolvedInsights }: { 
           {unresolvedInsights}
         </span>
       )}
+      {item.badgeKey === 'confirmacoes' && pendingConfirmations > 0 && (
+        <span className={clsx(
+          "bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 rounded-full font-bold",
+          isCollapsed ? "absolute -top-1 -right-1" : "ml-auto"
+        )}>
+          {pendingConfirmations}
+        </span>
+      )}
     </Link>
   );
 };
@@ -87,7 +96,24 @@ export function Sidebar() {
   const clinicName = useStore(state => state.clinicName);
   const currentUser = useStore(state => state.currentUser);
   const insights = useStore(state => state.insights);
+  const appointments = useStore(state => state.appointments);
   const unresolvedInsights = insights.filter(i => !i.resolved).length;
+
+  // Contagem de confirmações pendentes nos próximos 30 dias
+  const pendingConfirmations = useMemo(() => {
+    const now = new Date();
+    const limit = new Date();
+    limit.setDate(limit.getDate() + 30);
+    return appointments.filter(appt => {
+      const d = new Date(appt.date);
+      return d >= now && d <= limit &&
+        appt.confirmationStatus === 'pendente' &&
+        appt.status !== 'realizado' &&
+        appt.status !== 'finalizado' &&
+        appt.status !== 'faltou' &&
+        appt.status !== 'cancelado';
+    }).length;
+  }, [appointments]);
   
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isManual, setIsManual] = useState(false);
@@ -178,17 +204,17 @@ export function Sidebar() {
       <nav className="flex-1 p-4 space-y-6 overflow-y-auto overflow-x-hidden transition-all duration-300">
         <div className="space-y-1">
           {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Principal</div>}
-          {filteredPrincipal.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} />)}
+          {filteredPrincipal.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />)}
         </div>
         
         <div className="space-y-1">
           {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Operação</div>}
-          {filteredOperacao.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} />)}
+          {filteredOperacao.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />)}
         </div>
         
         <div className="space-y-1">
           {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Gestão</div>}
-          {filteredGestao.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} />)}
+          {filteredGestao.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />)}
         </div>
       </nav>
 
