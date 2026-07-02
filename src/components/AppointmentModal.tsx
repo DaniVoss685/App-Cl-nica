@@ -5,7 +5,7 @@ import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Calendar as CalendarIcon, Clock, UserCheck, AlertTriangle, Users, Stethoscope, DollarSign, Package, Sparkles, RefreshCcw } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, UserCheck, AlertTriangle, Users, Stethoscope, DollarSign, Package, Sparkles, RefreshCcw, Trash2 } from 'lucide-react';
 import { format, addDays, addMinutes } from 'date-fns';
 import { useStore } from '../store';
 import { cn } from '../lib/utils';
@@ -24,6 +24,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
   const { patients, professionals, appointments, services, packages, addAppointment, updateAppointment, inventory, serviceCategories } = useStore();
 
   const currentAppt = appointmentId ? appointments.find(a => a.id === appointmentId) : null;
+  const isReschedulingMissed = !!currentAppt && (currentAppt.status === 'faltou' || currentAppt.status === 'cancelado');
   const originalAppt = currentAppt && currentAppt.linkedToAppointmentId 
     ? appointments.find(a => a.id === currentAppt.linkedToAppointmentId) 
     : null;
@@ -51,7 +52,9 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
           isCaseStudy: appt.isCaseStudy || false,
           status: appt.status || 'agendado',
           upfrontPaid: appt.upfrontPaid || false,
-          upfrontPaidAmount: appt.upfrontPaidAmount || 0
+          upfrontPaidAmount: appt.upfrontPaidAmount || 0,
+          cardInstallments: appt.cardInstallments || 1,
+          paymentDate: appt.paymentDate || ''
         };
       }
     }
@@ -72,13 +75,17 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
       isCaseStudy: false,
       status: 'agendado' as const,
       upfrontPaid: false,
-      upfrontPaidAmount: 0
+      upfrontPaidAmount: 0,
+      cardInstallments: 1,
+      paymentDate: ''
     };
   };
 
   const [formData, setFormData] = useState(getInitialData());
   const [bulkSchedule, setBulkSchedule] = useState(false);
   const [displayValue, setDisplayValue] = useState('');
+  const [displayUpfrontPaidValue, setDisplayUpfrontPaidValue] = useState('');
+  const [displaySplits, setDisplaySplits] = useState<string[]>([]);
   const [showConflictDialog, setShowConflictDialog] = useState(false);
   const [showAvailabilityDialog, setShowAvailabilityDialog] = useState(false);
   const [showRescheduleExistingDialog, setShowRescheduleExistingDialog] = useState(false);
@@ -89,6 +96,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
   const [showFollowUpConfirm, setShowFollowUpConfirm] = useState(false);
   const [confirmedFollowUpDate, setConfirmedFollowUpDate] = useState('');
   const [isPaymentRecorded, setIsPaymentRecorded] = useState(false);
+  const [forceShowAllFields, setForceShowAllFields] = useState(false);
 
   // Pre-populate customItemsUsed whenever the selected service changes or modal data loads
   useEffect(() => {
@@ -117,14 +125,28 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
       } else {
         setDisplayValue('');
       }
+      if (data.upfrontPaidAmount !== undefined && data.upfrontPaidAmount > 0) {
+        setDisplayUpfrontPaidValue(new Intl.NumberFormat('pt-BR', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(data.upfrontPaidAmount));
+      } else {
+        setDisplayUpfrontPaidValue('');
+      }
+      if (data.paymentSplits) {
+        setDisplaySplits(data.paymentSplits.map(s => s.amount ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(s.amount) : ''));
+      } else {
+        setDisplaySplits([]);
+      }
       setShowConflictDialog(false);
       setShowRescheduleExistingDialog(false);
       setConflictingAppointment(null);
       setBulkSchedule(false);
       const alreadyPaid = data.paymentStatus === 'pago' || data.paymentStatus === 'parcial' || !!data.paymentMethod || (data.value !== undefined && data.value > 0);
       setIsPaymentRecorded(alreadyPaid);
+      setForceShowAllFields(false);
     }
-  }, [open, appointmentId, initialDate, initialStartTime]);
+  }, [open, appointmentId, initialDate, initialStartTime, appointments]);
 
   const handleValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawValue = e.target.value.replace(/\D/g, '');
@@ -141,6 +163,40 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
     }).format(numericValue);
     
     setDisplayValue(formatted === '0,00' && rawValue === '' ? '' : formatted);
+  };
+
+  const handleUpfrontPaidAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawValue = e.target.value.replace(/\D/g, '');
+    const numericValue = Number(rawValue) / 100;
+    
+    if (isNaN(numericValue)) return;
+    
+    setFormData({ ...formData, upfrontPaidAmount: numericValue, upfrontPaid: true });
+    
+    const formatted = new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numericValue);
+    
+    setDisplayUpfrontPaidValue(formatted === '0,00' && rawValue === '' ? '' : formatted);
+  };
+  
+  const handleSplitValueChange = (index: number, valStr: string) => {
+    const rawValue = valStr.replace(/\D/g, '');
+    const numericValue = rawValue === '' ? 0 : Number(rawValue) / 100;
+    if (isNaN(numericValue)) return;
+    
+    const splits = [...(formData.paymentSplits || [])];
+    splits[index] = { ...splits[index], amount: numericValue };
+    setFormData({ ...formData, paymentSplits: splits });
+    
+    const newDisplays = [...displaySplits];
+    const formatted = new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numericValue);
+    newDisplays[index] = formatted === '0,00' && rawValue === '' ? '' : formatted;
+    setDisplaySplits(newDisplays);
   };
 
   const handleServiceChange = (serviceId: string) => {
@@ -221,8 +277,24 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
       return;
     }
 
-    const finalPaymentStatus = isPaymentRecorded ? formData.paymentStatus : 'pendente';
+
+
+    let finalPaymentStatus = isPaymentRecorded ? formData.paymentStatus : 'pendente';
     const finalPaymentMethod = isPaymentRecorded ? (formData.paymentMethod || undefined) as any : undefined;
+    const finalCardInstallments = (isPaymentRecorded && finalPaymentMethod === 'cartão de crédito') ? Number(formData.cardInstallments || 1) : undefined;
+    const finalPaymentDate = isPaymentRecorded ? (formData.paymentDate || formData.date) : undefined;
+    let finalUpfrontPaidAmount = formData.upfrontPaidAmount || 0;
+
+    if (isPaymentRecorded && finalPaymentMethod === 'múltiplo' && formData.paymentSplits && formData.paymentSplits.length > 0) {
+      const allPaid = formData.paymentSplits.every(s => s.status === 'pago');
+      const allPending = formData.paymentSplits.every(s => s.status === 'pendente');
+      finalPaymentStatus = allPaid ? 'pago' : (allPending ? 'pendente' : 'parcial');
+      finalUpfrontPaidAmount = formData.paymentSplits.filter(s => s.status === 'pago').reduce((sum, s) => sum + s.amount, 0);
+    }
+
+    const isReschedulingMissed = !!appointmentId && (formData.status === 'faltou' || formData.status === 'cancelado');
+    const finalStatus = isReschedulingMissed ? 'agendado' : formData.status;
+    const finalConfirmationStatus = isReschedulingMissed ? 'pendente' : formData.confirmationStatus;
 
     if (appointmentId) {
       updateAppointment(appointmentId, {
@@ -234,16 +306,19 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
         startTime: formData.startTime,
         endTime: formData.endTime,
         type: formData.type as any,
-        confirmationStatus: formData.confirmationStatus,
+        confirmationStatus: finalConfirmationStatus as any,
         value: formData.value || 0,
         paymentStatus: finalPaymentStatus,
         paymentMethod: finalPaymentMethod,
+        cardInstallments: finalCardInstallments,
+        paymentDate: finalPaymentDate,
         notes: formData.notes,
-        status: formData.status as any,
+        status: finalStatus as any,
         customItemCostsUsed: customItemsUsed,
         isCaseStudy: formData.isCaseStudy,
-        upfrontPaid: formData.upfrontPaid,
-        upfrontPaidAmount: formData.upfrontPaidAmount
+        upfrontPaid: finalUpfrontPaidAmount > 0 ? true : formData.upfrontPaid,
+        upfrontPaidAmount: finalUpfrontPaidAmount,
+        paymentSplits: finalPaymentMethod === 'múltiplo' ? formData.paymentSplits : undefined
       });
     } else if (bulkSchedule && selectedPkg && selectedPkg.totalSessions > 1 && selectedPkg.sessionInterval) {
       const [year, month, day] = formData.date.split('-').map(Number);
@@ -266,10 +341,13 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
           value: i === 0 ? (formData.value || 0) : 0, 
           paymentStatus: finalPaymentStatus,
           paymentMethod: finalPaymentMethod,
+          cardInstallments: i === 0 ? finalCardInstallments : undefined,
+          paymentDate: i === 0 ? finalPaymentDate : undefined,
           notes: i === 0 ? formData.notes : `Sessão ${i + 1}/${selectedPkg.totalSessions} do pacote ${selectedPkg.name}${formData.notes ? ` - ${formData.notes}` : ''}`,
           isCaseStudy: formData.isCaseStudy,
-          upfrontPaid: i === 0 ? formData.upfrontPaid : false,
-          upfrontPaidAmount: i === 0 ? formData.upfrontPaidAmount : 0
+          upfrontPaid: i === 0 ? (finalUpfrontPaidAmount > 0 ? true : formData.upfrontPaid) : false,
+          upfrontPaidAmount: i === 0 ? finalUpfrontPaidAmount : 0,
+          paymentSplits: (i === 0 && finalPaymentMethod === 'múltiplo') ? formData.paymentSplits : undefined
         });
         startDate = addDays(startDate, selectedPkg.sessionInterval);
       }
@@ -289,10 +367,13 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
         value: formData.value || 0,
         paymentStatus: finalPaymentStatus,
         paymentMethod: finalPaymentMethod,
+        cardInstallments: finalCardInstallments,
+        paymentDate: finalPaymentDate,
         notes: formData.notes,
         isCaseStudy: formData.isCaseStudy,
-        upfrontPaid: formData.upfrontPaid,
-        upfrontPaidAmount: formData.upfrontPaidAmount
+        upfrontPaid: finalUpfrontPaidAmount > 0 ? true : formData.upfrontPaid,
+        upfrontPaidAmount: finalUpfrontPaidAmount,
+        paymentSplits: finalPaymentMethod === 'múltiplo' ? formData.paymentSplits : undefined
       });
     }
 
@@ -312,6 +393,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
     const selectedPkg = packages.find(p => p.id === formData.packageId);
     const finalPaymentStatus = isPaymentRecorded ? formData.paymentStatus : 'pendente';
     const finalPaymentMethod = isPaymentRecorded ? (formData.paymentMethod || undefined) as any : undefined;
+    const finalCardInstallments = (isPaymentRecorded && finalPaymentMethod === 'cartão de crédito') ? Number(formData.cardInstallments || 1) : undefined;
 
     if (bulkSchedule && selectedPkg && selectedPkg.totalSessions > 1 && selectedPkg.sessionInterval) {
       const [year, month, day] = formData.date.split('-').map(Number);
@@ -334,6 +416,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
           value: i === 0 ? (formData.value || 0) : 0, 
           paymentStatus: finalPaymentStatus,
           paymentMethod: finalPaymentMethod,
+          cardInstallments: i === 0 ? finalCardInstallments : undefined,
           notes: i === 0 ? formData.notes : `Sessão ${i + 1}/${selectedPkg.totalSessions} do pacote ${selectedPkg.name}${formData.notes ? ` - ${formData.notes}` : ''}`,
           isCaseStudy: formData.isCaseStudy,
           upfrontPaid: i === 0 ? formData.upfrontPaid : false,
@@ -357,6 +440,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
         value: formData.value || 0,
         paymentStatus: finalPaymentStatus,
         paymentMethod: finalPaymentMethod,
+        cardInstallments: finalCardInstallments,
         notes: formData.notes,
         isCaseStudy: formData.isCaseStudy,
         upfrontPaid: formData.upfrontPaid,
@@ -375,6 +459,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
     const selectedPkg = packages.find(p => p.id === formData.packageId);
     const finalPaymentStatus = isPaymentRecorded ? formData.paymentStatus : 'pendente';
     const finalPaymentMethod = isPaymentRecorded ? (formData.paymentMethod || undefined) as any : undefined;
+    const finalCardInstallments = (isPaymentRecorded && finalPaymentMethod === 'cartão de crédito') ? Number(formData.cardInstallments || 1) : undefined;
 
     if (bulkSchedule && selectedPkg && selectedPkg.totalSessions > 1 && selectedPkg.sessionInterval) {
       const [year, month, day] = formData.date.split('-').map(Number);
@@ -397,6 +482,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
           value: i === 0 ? (formData.value || 0) : 0, 
           paymentStatus: finalPaymentStatus,
           paymentMethod: finalPaymentMethod,
+          cardInstallments: i === 0 ? finalCardInstallments : undefined,
           notes: i === 0 ? formData.notes : `Sessão ${i + 1}/${selectedPkg.totalSessions} do pacote ${selectedPkg.name}${formData.notes ? ` - ${formData.notes}` : ''}`,
           isCaseStudy: formData.isCaseStudy,
           upfrontPaid: i === 0 ? formData.upfrontPaid : false,
@@ -420,15 +506,13 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
         value: formData.value || 0,
         paymentStatus: finalPaymentStatus,
         paymentMethod: finalPaymentMethod,
+        cardInstallments: finalCardInstallments,
         notes: formData.notes,
         isCaseStudy: formData.isCaseStudy,
         upfrontPaid: formData.upfrontPaid,
         upfrontPaidAmount: formData.upfrontPaidAmount
       }, 'none');
     }
-
-    if (onSuccess) onSuccess(null);
-    setShowFollowUpConfirm(false);
     onOpenChange(false);
   };
 
@@ -468,6 +552,30 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
       return;
     }
 
+    if (isPaymentRecorded && formData.paymentMethod === 'múltiplo') {
+      const splits = formData.paymentSplits || [];
+      const totalSplits = splits.reduce((sum, s) => sum + s.amount, 0);
+      if (Math.abs(totalSplits - (formData.value || 0)) > 0.01) {
+        setValidationError('A soma das formas de pagamento deve ser igual ao valor cobrado (R$ ' + (formData.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + ').');
+        return;
+      }
+      if (splits.length === 0) {
+        setValidationError('Por favor, adicione pelo menos uma forma de pagamento para divisão.');
+        return;
+      }
+    }
+
+    if (isPaymentRecorded && formData.paymentStatus === 'parcial') {
+      if (!formData.upfrontPaidAmount || formData.upfrontPaidAmount <= 0) {
+        setValidationError('Por favor, preencha o valor pago parcialmente no Passo 4.');
+        return;
+      }
+      if (formData.upfrontPaidAmount >= (formData.value || 0)) {
+        setValidationError('O valor pago parcialmente deve ser menor que o valor total cobrado. Caso tenha sido pago por completo, escolha "Pago Inteiro".');
+        return;
+      }
+    }
+
     if ((formData.status === 'realizado' || formData.status === 'finalizado') && !formData.notes.trim()) {
       setValidationError('Por favor, preencha o diagnóstico / notas clínicas no Passo 5 para concluir este agendamento.');
       return;
@@ -483,11 +591,12 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
     }
 
     // Conflict detection
-    const conflict = appointments.find(a => 
+    const isConcluded = formData.status === 'realizado' || formData.status === 'finalizado';
+    const conflict = isConcluded ? null : appointments.find(a => 
+      a.id !== appointmentId &&
       a.professionalId === formData.professionalId &&
       a.date === formData.date &&
-      a.status !== 'cancelado' &&
-      a.status !== 'finalizado' &&
+      ['agendado', 'confirmado', 'chegou', 'atrasado'].includes(a.status) &&
       (
         (formData.startTime >= a.startTime && formData.startTime < a.endTime) ||
         (formData.endTime > a.startTime && formData.endTime <= a.endTime) ||
@@ -516,6 +625,8 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
     }
   };
 
+  const isRescheduling = !!currentAppt && (currentAppt.status === 'faltou' || currentAppt.status === 'cancelado') && !forceShowAllFields;
+
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -527,10 +638,10 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
             </div>
             <div>
               <DialogTitle className="text-3xl font-black italic">
-                {appointmentId ? 'Detalhes do Agendamento' : 'Novo Agendamento'}
+                {isRescheduling ? 'Reagendar Atendimento' : appointmentId ? 'Detalhes do Agendamento' : 'Novo Agendamento'}
               </DialogTitle>
               <p className="text-indigo-100 text-sm font-medium mt-1 italic">
-                {appointmentId ? 'Visualize e edite as informações do agendamento' : 'Preencha os dados abaixo para reservar um horário na agenda'}
+                {isRescheduling ? 'Defina a nova data e horário para confirmar o reagendamento' : appointmentId ? 'Visualize e edite as informações do agendamento' : 'Preencha os dados abaixo para reservar um horário na agenda'}
               </p>
             </div>
           </div>
@@ -585,8 +696,71 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                 </div>
               )}
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* SEQUÊNCIA DO AGENDAMENTO (DA ESQUERDA PARA A DIREITA) */}
+              {isRescheduling ? (
+                <div className="max-w-xl mx-auto space-y-6 w-full">
+                  {/* Read-only Patient & Service Card */}
+                  <div className="bg-indigo-50/50 border border-indigo-100 rounded-3xl p-6 space-y-4">
+                    <p className="text-[10px] text-indigo-800 uppercase font-black tracking-widest italic">Paciente & Procedimento</p>
+                    <h4 className="text-slate-900 font-black text-xl truncate capitalize">
+                      {patients.find(p => p.id === formData.patientId)?.name || 'Paciente'}
+                    </h4>
+                    
+                    <div className="grid grid-cols-2 gap-4 pt-2 border-t border-indigo-100/50">
+                      <div>
+                        <p className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">Profissional</p>
+                        <p className="text-slate-700 font-bold text-xs">
+                          Dr(a). {professionals.find(p => p.id === formData.professionalId)?.name || 'Clínica'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">Procedimento</p>
+                        <p className="text-slate-700 font-bold text-xs truncate capitalize font-sans">
+                          {services.find(s => s.id === formData.serviceId)?.name || packages.find(p => p.id === formData.packageId)?.name || 'Geral'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* PASSO 3: Agenda & Horários */}
+                  <div className="p-6 bg-slate-50/70 border border-indigo-100 rounded-[2rem] space-y-6 shadow-sm">
+                    <div className="flex items-center gap-3">
+                      <span className="w-7 h-7 bg-indigo-600 text-white rounded-full flex items-center justify-center font-black italic text-xs">📅</span>
+                      <h3 className="text-indigo-950 font-black text-sm uppercase tracking-wider italic flex items-center gap-1.5 font-sans font-bold">
+                        Nova Data & Horários
+                      </h3>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="space-y-2 md:col-span-1">
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Data Atendimento <span className="text-red-500">*</span></Label>
+                        <Input className="h-12 border-slate-200 bg-white font-bold rounded-xl" type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} required />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Início <span className="text-red-500">*</span></Label>
+                        <Input className="h-12 border-slate-200 bg-white font-mono font-bold rounded-xl" type="time" value={formData.startTime} onChange={e => handleStartTimeChange(e.target.value)} required />
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider font-sans">Previsão Fim <span className="text-red-500">*</span></Label>
+                        <Input className="h-12 border-slate-200 bg-white font-mono font-bold rounded-xl" type="time" value={formData.endTime} onChange={e => setFormData({...formData, endTime: e.target.value})} required />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-center pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setForceShowAllFields(true)}
+                      className="text-xs text-indigo-600 hover:text-indigo-850 font-bold uppercase tracking-wider italic hover:underline cursor-pointer font-sans"
+                    >
+                      Exibir detalhes completos do agendamento
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* SEQUÊNCIA DO AGENDAMENTO (DA ESQUERDA PARA A DIREITA) */}
                 
                 {/* PASSO 1: Identificação do Paciente */}
                   <div className="p-6 bg-slate-50/70 border border-indigo-100 rounded-[2rem] space-y-6 relative overflow-hidden">
@@ -869,24 +1043,273 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                               </SelectContent>
                             </Select>
                           </div>
+
+                          {formData.paymentStatus === 'parcial' && (
+                            <div className="space-y-2 animate-in fade-in duration-200">
+                              <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Valor Pago Parcialmente (R$)</Label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">R$</span>
+                                <Input 
+                                  className="h-12 border-slate-200 bg-white pl-10 font-bold rounded-xl"
+                                  placeholder="0,00"
+                                  value={displayUpfrontPaidValue} 
+                                  onChange={handleUpfrontPaidAmountChange} 
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
 
                         <div className="space-y-2">
                           <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Forma de Pagamento</Label>
-                          <Select value={formData.paymentMethod} onValueChange={(v) => setFormData({...formData, paymentMethod: v as any})}>
+                          <Select 
+                            value={formData.paymentMethod} 
+                            onValueChange={(v) => {
+                              if (v === 'múltiplo' && (!formData.paymentSplits || formData.paymentSplits.length === 0)) {
+                                setFormData({
+                                  ...formData,
+                                  paymentMethod: v as any,
+                                  paymentSplits: [
+                                    { method: 'pix', amount: formData.value || 0, status: 'pago', paymentDate: formData.paymentDate || formData.date }
+                                  ]
+                                });
+                              } else {
+                                setFormData({...formData, paymentMethod: v as any});
+                              }
+                            }}
+                          >
                             <SelectTrigger className="h-12 border-slate-200 bg-white font-bold w-full rounded-xl">
                               <SelectValue placeholder="Selecione...">
-                                {formData.paymentMethod || 'Selecione...'}
+                                {formData.paymentMethod === 'múltiplo' ? 'Múltiplas Formas (Dividido)' : (formData.paymentMethod || 'Selecione...')}
                               </SelectValue>
                             </SelectTrigger>
                             <SelectContent className="z-[5000]">
-                              <SelectItem value="Pix" className="italic font-bold">Pix</SelectItem>
-                              <SelectItem value="Cartão de Crédito" className="italic font-bold">Cartão de Crédito</SelectItem>
-                              <SelectItem value="Dinheiro" className="italic font-bold">Dinheiro</SelectItem>
-                              <SelectItem value="Boleto" className="italic font-bold">Boleto</SelectItem>
+                              <SelectItem value="pix" className="italic font-bold">Pix</SelectItem>
+                              <SelectItem value="cartão de crédito" className="italic font-bold">Cartão de Crédito</SelectItem>
+                              <SelectItem value="cartão de débito" className="italic font-bold">Cartão de Débito</SelectItem>
+                              <SelectItem value="dinheiro" className="italic font-bold">Dinheiro</SelectItem>
+                              <SelectItem value="boleto" className="italic font-bold">Boleto</SelectItem>
+                              <SelectItem value="múltiplo" className="italic font-bold text-indigo-650 bg-indigo-50/50">Múltiplas Formas (Dividir)</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
+
+                        {formData.paymentMethod !== 'múltiplo' && formData.paymentMethod === 'cartão de crédito' && (
+                          <div className="space-y-2 animate-in fade-in duration-200 mt-4">
+                            <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Número de Parcelas</Label>
+                            <Select 
+                              value={String(formData.cardInstallments || 1)} 
+                              onValueChange={(v) => setFormData({...formData, cardInstallments: Number(v)})}
+                            >
+                              <SelectTrigger className="h-12 border-slate-200 bg-white font-bold w-full rounded-xl">
+                                <SelectValue placeholder="Parcelas...">
+                                  {formData.cardInstallments ? `${formData.cardInstallments}x` : '1x'}
+                                </SelectValue>
+                              </SelectTrigger>
+                              <SelectContent className="z-[5000]">
+                                {[...Array(12)].map((_, i) => (
+                                  <SelectItem key={i + 1} value={String(i + 1)} className="font-bold italic">
+                                    {i + 1}x
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+
+                        {formData.paymentMethod !== 'múltiplo' && (formData.paymentStatus === 'pago' || formData.paymentStatus === 'parcial') && (
+                          <div className="space-y-2 animate-in fade-in duration-200 mt-4">
+                            <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Data do Pagamento</Label>
+                            <Input 
+                              type="date" 
+                              className="h-12 border-slate-200 bg-white font-bold rounded-xl"
+                              value={formData.paymentDate || formData.date} 
+                              onChange={e => setFormData({...formData, paymentDate: e.target.value})} 
+                            />
+                          </div>
+                        )}
+
+                        {formData.paymentMethod === 'múltiplo' && (
+                          <div className="col-span-1 md:col-span-2 space-y-4 bg-indigo-50/20 p-5 rounded-2xl border border-indigo-100/50 mt-4 animate-in fade-in duration-200 w-full">
+                            <div className="flex justify-between items-center">
+                              <Label className="text-indigo-900 font-extrabold italic text-xs uppercase tracking-wider">Múltiplas Formas de Pagamento (Divisão)</Label>
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="bg-indigo-650 hover:bg-indigo-700 text-white font-bold text-[10px] uppercase rounded-xl h-8 cursor-pointer border-none"
+                                onClick={() => {
+                                  const splits = formData.paymentSplits || [];
+                                  const currentTotal = splits.reduce((sum, s) => sum + s.amount, 0);
+                                  const remaining = Math.max(0, (formData.value || 0) - currentTotal);
+                                  setFormData({
+                                    ...formData,
+                                    paymentSplits: [
+                                      ...splits,
+                                      { method: 'pix', amount: remaining, status: 'pago', paymentDate: formData.date }
+                                    ]
+                                  });
+                                  setDisplaySplits([
+                                    ...displaySplits,
+                                    remaining === 0 ? '' : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(remaining)
+                                  ]);
+                                }}
+                              >
+                                + Adicionar Forma
+                              </Button>
+                            </div>
+
+                            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                              {(formData.paymentSplits || []).map((split, index) => (
+                                <div key={index} className="bg-white p-3 rounded-xl border border-slate-150 shadow-sm flex flex-col md:flex-row items-center gap-3">
+                                  <div className="flex-1 w-full">
+                                    <Label className="text-[9px] text-slate-400 font-bold uppercase mb-1 block">Forma</Label>
+                                    <Select 
+                                      value={split.method} 
+                                      onValueChange={(v) => {
+                                        const splits = [...(formData.paymentSplits || [])];
+                                        splits[index] = { ...split, method: v as any };
+                                        setFormData({ ...formData, paymentSplits: splits });
+                                      }}
+                                    >
+                                      <SelectTrigger className="h-10 border-slate-200 text-xs font-bold w-full rounded-lg bg-white">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="z-[6000]">
+                                        <SelectItem value="pix">Pix</SelectItem>
+                                        <SelectItem value="cartão de crédito">Cartão de Crédito</SelectItem>
+                                        <SelectItem value="cartão de débito">Cartão de Débito</SelectItem>
+                                        <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                                        <SelectItem value="boleto">Boleto</SelectItem>
+                                        <SelectItem value="transferência">Transferência</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div className="w-full md:w-32">
+                                    <Label className="text-[9px] text-slate-400 font-bold uppercase mb-1 block">Valor (R$)</Label>
+                                    <div className="relative">
+                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 font-mono">R$</span>
+                                      <Input
+                                        type="text"
+                                        placeholder="0,00"
+                                        className="pl-8 h-10 border-slate-200 text-xs font-bold w-full rounded-lg font-mono"
+                                        value={displaySplits[index] || ''}
+                                        onChange={(e) => handleSplitValueChange(index, e.target.value)}
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {split.method === 'cartão de crédito' && (
+                                    <div className="w-full md:w-20">
+                                      <Label className="text-[9px] text-slate-400 font-bold uppercase mb-1 block">Parcelas</Label>
+                                      <Select 
+                                        value={String(split.installments || 1)} 
+                                        onValueChange={(v) => {
+                                          const splits = [...(formData.paymentSplits || [])];
+                                          splits[index] = { ...split, installments: Number(v) };
+                                          setFormData({ ...formData, paymentSplits: splits });
+                                        }}
+                                      >
+                                        <SelectTrigger className="h-10 border-slate-200 text-xs font-bold w-full rounded-lg bg-white">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent className="z-[6000]">
+                                          {[...Array(12)].map((_, i) => (
+                                            <SelectItem key={i + 1} value={String(i + 1)}>{i + 1}x</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  )}
+
+                                  <div className="w-full md:w-28">
+                                    <Label className="text-[9px] text-slate-400 font-bold uppercase mb-1 block">Status</Label>
+                                    <Select 
+                                      value={split.status} 
+                                      onValueChange={(v) => {
+                                        const splits = [...(formData.paymentSplits || [])];
+                                        splits[index] = { ...split, status: v as any };
+                                        setFormData({ ...formData, paymentSplits: splits });
+                                      }}
+                                    >
+                                      <SelectTrigger className="h-10 border-slate-200 text-xs font-bold w-full rounded-lg bg-white">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent className="z-[6000]">
+                                        <SelectItem value="pago">Pago</SelectItem>
+                                        <SelectItem value="pendente">Pendente</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  {split.status === 'pago' && (
+                                    <div className="w-full md:w-36">
+                                      <Label className="text-[9px] text-slate-400 font-bold uppercase mb-1 block">Data Pagto.</Label>
+                                      <Input
+                                        type="date"
+                                        className="h-10 border-slate-200 text-xs font-bold w-full rounded-lg"
+                                        value={split.paymentDate || formData.date}
+                                        onChange={(e) => {
+                                          const splits = [...(formData.paymentSplits || [])];
+                                          splits[index] = { ...split, paymentDate: e.target.value };
+                                          setFormData({ ...formData, paymentSplits: splits });
+                                        }}
+                                      />
+                                    </div>
+                                  )}
+
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-9 w-9 text-red-500 hover:text-red-750 hover:bg-red-50 mt-4 shrink-0 rounded-xl cursor-pointer"
+                                    onClick={() => {
+                                      const splits = (formData.paymentSplits || []).filter((_, i) => i !== index);
+                                      setFormData({ ...formData, paymentSplits: splits });
+                                      setDisplaySplits(displaySplits.filter((_, i) => i !== index));
+                                    }}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              ))}
+
+                              {(formData.paymentSplits || []).length === 0 && (
+                                <p className="text-slate-400 font-bold text-xs italic text-center py-4">Nenhuma forma de pagamento adicionada.</p>
+                              )}
+                            </div>
+
+                            {/* Resumo do Split */}
+                            {(() => {
+                              const splits = formData.paymentSplits || [];
+                              const totalSplits = splits.reduce((sum, s) => sum + s.amount, 0);
+                              const totalPaid = splits.filter(s => s.status === 'pago').reduce((sum, s) => sum + s.amount, 0);
+                              const apptValue = formData.value || 0;
+                              const matchesTotal = Math.abs(totalSplits - apptValue) < 0.01;
+
+                              return (
+                                <div className="pt-3 border-t border-indigo-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 font-sans text-xs">
+                                  <div className="space-y-1">
+                                    <div className="flex gap-2">
+                                      <span className="text-slate-500 font-bold">Lançado: R$ {totalSplits.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                      <span className="text-slate-350">•</span>
+                                      <span className="text-green-600 font-bold">Pago: R$ {totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                    <div className="font-extrabold text-[10px] uppercase text-indigo-700">
+                                      Total Cobrado: R$ {apptValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </div>
+                                  </div>
+                                  <div className={cn(
+                                    "px-3 py-1 rounded-full font-black text-[10px] uppercase border tracking-wider",
+                                    matchesTotal ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200 animate-pulse"
+                                  )}>
+                                    {matchesTotal ? 'Valores Fecham' : `Diferença: R$ ${(apptValue - totalSplits).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -971,10 +1394,10 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                               <div className="relative">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs font-mono">R$</span>
                                 <Input
-                                  type="number"
+                                  placeholder="0,00"
                                   className="h-10 bg-white border-slate-200 rounded-xl pl-9 font-bold text-xs"
-                                  value={formData.upfrontPaidAmount || ''}
-                                  onChange={e => setFormData({ ...formData, upfrontPaidAmount: parseFloat(e.target.value) || 0 })}
+                                  value={displayUpfrontPaidValue}
+                                  onChange={handleUpfrontPaidAmountChange}
                                 />
                               </div>
                             </div>
@@ -1078,6 +1501,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                     </div>
                   </div>
               </div>
+              )}
             </div>
           </div>
 
@@ -1096,7 +1520,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                   cancelar
                 </Button>
                 <Button type="submit" className="bg-indigo-600 hover:bg-indigo-700 h-14 px-12 font-black text-lg shadow-xl shadow-indigo-100 rounded-2xl min-w-[280px] transition-all hover:scale-[1.02] active:scale-[0.98] lowercase italic tracking-wider uppercase text-xs">
-                  {appointmentId ? 'salvar alterações' : 'salvar agendamento'}
+                  {isRescheduling ? 'confirmar reagendamento' : appointmentId ? 'salvar alterações' : 'salvar agendamento'}
                 </Button>
               </div>
             </div>
@@ -1136,14 +1560,12 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 font-black text-lg shadow-xl shadow-indigo-100 rounded-2xl lowercase italic"
                onClick={() => {
                  setShowAvailabilityDialog(false);
-                 // We skip the availability check next time because showAvailabilityDialog was just true
-                 // but wait, we need to proceed manually
-                 const conflict = appointments.find(a => 
+                 const isConcluded = formData.status === 'realizado' || formData.status === 'finalizado';
+                 const conflict = isConcluded ? null : appointments.find(a => 
+                   a.id !== appointmentId &&
                    a.professionalId === formData.professionalId &&
                    a.date === formData.date &&
-                   a.status !== 'cancelado' &&
-                   a.id !== appointmentId && // Ignore self when editing
-                   a.status !== 'finalizado' &&
+                   ['agendado', 'confirmado', 'chegou', 'atrasado'].includes(a.status) &&
                    (
                      (formData.startTime >= a.startTime && formData.startTime < a.endTime) ||
                      (formData.endTime > a.startTime && formData.endTime <= a.endTime) ||

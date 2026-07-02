@@ -48,6 +48,7 @@ interface PatientModalProps {
   onClose: () => void;
   patientId: string | null;
   onSelectPatient?: (id: string) => void;
+  initialTab?: string;
 }
 
 const formatCPF = (value: string) => {
@@ -110,9 +111,12 @@ const referralOptions = [
   { value: 'Outros', label: 'Outros meios', icon: '✨' },
 ];
 
-export function PatientModal({ isOpen, onClose, patientId, onSelectPatient }: PatientModalProps) {
-  const { patients, appointments, services, professionals, addPatient, updatePatient, removePatient, medicalRecords, addMedicalRecord, finance, budgets } = useStore();
+export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, initialTab }: PatientModalProps) {
+  const { patients, appointments, services, professionals, addPatient, updatePatient, removePatient, medicalRecords, addMedicalRecord, finance, budgets, doctorNotes, beforeAfterPhotos } = useStore();
   const patient = patients.find(p => p.id === patientId);
+  
+  const patientNotes = patientId ? (doctorNotes || []).filter(n => n.patientId === patientId) : [];
+  const patientPhotos = patientId ? (beforeAfterPhotos || []).filter(p => p.patientId === patientId) : [];
   
   // Cálculos dinâmicos e reais do paciente para evitar dados mocados
   const patientFinance = patient ? finance.filter(f => f.patientId === patient.id && f.type === 'receita') : [];
@@ -162,6 +166,13 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient }: Pa
   const [savedPatientName, setSavedPatientName] = useState('');
   const [savedPatientId, setSavedPatientId] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
+  const [clinicalSubTab, setClinicalSubTab] = useState<'evolucao' | 'rascunhos' | 'fotos'>('evolucao');
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveTab(initialTab || 'overview');
+    }
+  }, [isOpen, initialTab]);
 
   useEffect(() => {
     if (isOpen && patient) {
@@ -876,52 +887,169 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient }: Pa
                   </TabsContent>
 
                   <TabsContent value="clinical" className="m-0 space-y-6">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-black text-slate-900 italic">Evoluções e Prontuário</h3>
-                      <Button 
-                        onClick={() => setIsNewInteractionModalOpen(true)}
-                        className="h-9 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-[10px] italic shadow-lg shadow-indigo-100"
-                      >
-                        <Plus className="w-4 h-4 mr-2" />
-                        Nova Evolução Clínica
-                      </Button>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                      {/* Clinical Subtabs */}
+                      <div className="flex gap-1 p-0.5 bg-slate-150 rounded-xl select-none max-w-sm">
+                        <button 
+                          onClick={() => setClinicalSubTab('evolucao')}
+                          className={cn(
+                            "py-1.5 px-3 text-[9px] font-black italic rounded-lg transition-all capitalize whitespace-nowrap cursor-pointer",
+                            clinicalSubTab === 'evolucao' ? "bg-white text-indigo-650 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                          )}
+                        >
+                          Evoluções ({patientRecords.length})
+                        </button>
+                        <button 
+                          onClick={() => setClinicalSubTab('rascunhos')}
+                          className={cn(
+                            "py-1.5 px-3 text-[9px] font-black italic rounded-lg transition-all capitalize whitespace-nowrap cursor-pointer",
+                            clinicalSubTab === 'rascunhos' ? "bg-white text-indigo-650 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                          )}
+                        >
+                          Rascunhos ({patientNotes.length})
+                        </button>
+                        <button 
+                          onClick={() => setClinicalSubTab('fotos')}
+                          className={cn(
+                            "py-1.5 px-3 text-[9px] font-black italic rounded-lg transition-all capitalize whitespace-nowrap cursor-pointer",
+                            clinicalSubTab === 'fotos' ? "bg-white text-indigo-650 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                          )}
+                        >
+                          Antes & Depois ({patientPhotos.length})
+                        </button>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <Button 
+                          onClick={() => setIsNewInteractionModalOpen(true)}
+                          className="h-9 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-[10px] italic shadow-lg shadow-indigo-100"
+                        >
+                          <Plus className="w-4 h-4 mr-2" />
+                          Nova Evolução Clínica
+                        </Button>
+                      </div>
                     </div>
 
-                    {patientRecords.length === 0 ? (
-                      <div className="py-20 text-center space-y-6">
-                        <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400">
-                          <FileText className="w-10 h-10" />
-                        </div>
-                        <div>
-                          <h3 className="text-xl font-black text-slate-900 italic">Nenhuma evolução registrada</h3>
-                          <p className="text-slate-500 text-sm max-w-sm mx-auto mt-2 leading-relaxed">
-                            Comece registrando o histórico clínico e evoluções deste paciente agora.
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {patientRecords.map(record => {
-                          const prof = professionals.find(p => p.id === record.professionalId);
-                          return (
-                            <Card key={record.id} className="p-6 border-slate-100 rounded-[2rem] bg-white shadow-sm">
-                              <div className="flex justify-between items-start mb-4">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600">
-                                    <Badge className="bg-indigo-600 text-white p-0.5 rounded-md"><FileText className="w-4 h-4" /></Badge>
+                    {clinicalSubTab === 'evolucao' && (
+                      <>
+                        {patientRecords.length === 0 ? (
+                          <div className="py-20 text-center space-y-6">
+                            <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400">
+                              <FileText className="w-10 h-10" />
+                            </div>
+                            <div>
+                              <h3 className="text-xl font-black text-slate-900 italic">Nenhuma evolução registrada</h3>
+                              <p className="text-slate-500 text-sm max-w-sm mx-auto mt-2 leading-relaxed">
+                                Comece registrando o histórico clínico e evoluções deste paciente agora.
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {patientRecords.map(record => {
+                              const prof = professionals.find(p => p.id === record.professionalId);
+                              return (
+                                <Card key={record.id} className="p-6 border-slate-100 rounded-[2rem] bg-white shadow-sm">
+                                  <div className="flex justify-between items-start mb-4">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600">
+                                        <Badge className="bg-indigo-600 text-white p-0.5 rounded-md"><FileText className="w-4 h-4" /></Badge>
+                                      </div>
+                                      <div>
+                                        <p className="text-sm font-black text-slate-900 italic uppercase">{record.type}</p>
+                                        <p className="text-[10px] text-slate-400 font-bold italic">{format(new Date(record.date), 'dd/MM/yyyy HH:mm')} • {prof?.name}</p>
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div>
-                                    <p className="text-sm font-black text-slate-900 italic uppercase">{record.type}</p>
-                                    <p className="text-[10px] text-slate-400 font-bold italic">{format(new Date(record.date), 'dd/MM/yyyy HH:mm')} • {prof?.name}</p>
+                                  <p className="text-sm text-slate-700 leading-relaxed font-medium">
+                                    {record.content}
+                                  </p>
+                                </Card>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {clinicalSubTab === 'rascunhos' && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {patientNotes.map(note => (
+                          <Card 
+                            key={note.id} 
+                            className={cn(
+                              "p-5 rounded-[2rem] border shadow-sm relative flex flex-col justify-between min-h-[160px]",
+                              note.isDraft ? "bg-amber-50/20 border-amber-200/40" : "bg-indigo-50/10 border-indigo-100/40"
+                            )}
+                          >
+                            <div>
+                              <div className="flex justify-between items-start gap-2 mb-2">
+                                <span className="font-extrabold text-slate-900 italic text-[13px]">{note.title}</span>
+                                <Badge className={cn(
+                                  "text-[8px] font-black uppercase tracking-wider rounded-lg shrink-0 px-2 py-0.5",
+                                  note.isDraft ? "bg-amber-100 text-amber-800" : "bg-indigo-100 text-indigo-800"
+                                )}>
+                                  {note.isDraft ? 'rascunho' : 'anotação'}
+                                </Badge>
+                              </div>
+                              <p className="text-slate-650 text-xs font-medium leading-relaxed whitespace-pre-line mb-4">
+                                {note.content}
+                              </p>
+                            </div>
+                            <div className="pt-2 border-t border-slate-100/50 flex items-center justify-between text-[9px] font-bold text-slate-400">
+                              <span className="font-mono">{format(new Date(note.createdAt), 'dd/MM/yyyy HH:mm')}</span>
+                              <span className="italic">anotação médica</span>
+                            </div>
+                          </Card>
+                        ))}
+
+                        {patientNotes.length === 0 && (
+                          <div className="col-span-full py-16 text-center text-slate-400 font-bold italic text-sm">
+                            Nenhum rascunho ou anotação livre associado a este paciente.
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {clinicalSubTab === 'fotos' && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {patientPhotos.map(item => (
+                          <Card key={item.id} className="p-4 rounded-[2rem] border border-slate-200 shadow-sm bg-white overflow-hidden flex flex-col justify-between">
+                            <div>
+                              <div className="flex justify-between items-start gap-2 mb-3">
+                                <div>
+                                  <h4 className="font-black text-slate-900 italic text-sm">{item.procedureName}</h4>
+                                  <p className="text-[9px] text-slate-400 font-bold font-mono">{item.date}</p>
+                                </div>
+                              </div>
+
+                              <div className="relative h-44 rounded-xl overflow-hidden bg-slate-50 border border-slate-100 flex items-center justify-center select-none">
+                                <div className="absolute inset-0 grid grid-cols-2 divide-x divide-white">
+                                  <div className="relative w-full h-full overflow-hidden">
+                                    <img src={item.beforePhotoUrl} alt="Antes" className="absolute inset-0 w-full h-full object-cover" />
+                                    <span className="absolute bottom-2 left-2 bg-black/60 text-white font-black text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded z-10">Antes</span>
+                                  </div>
+                                  <div className="relative w-full h-full overflow-hidden">
+                                    <img src={item.afterPhotoUrl} alt="Depois" className="absolute inset-0 w-full h-full object-cover" />
+                                    <span className="absolute bottom-2 right-2 bg-indigo-600/90 text-white font-black text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded z-10">Depois</span>
                                   </div>
                                 </div>
                               </div>
-                              <p className="text-sm text-slate-700 leading-relaxed font-medium">
-                                {record.content}
-                              </p>
-                            </Card>
-                          );
-                        })}
+
+                              {item.notes && (
+                                <p className="text-[10px] text-slate-500 font-medium italic mt-2.5 leading-relaxed bg-slate-50/50 p-2 rounded-xl border border-slate-100">
+                                  {item.notes}
+                                </p>
+                              )}
+                            </div>
+                          </Card>
+                        ))}
+
+                        {patientPhotos.length === 0 && (
+                          <div className="col-span-full py-16 text-center text-slate-400 font-bold italic text-sm">
+                            Nenhuma foto comparativa cadastrada para este paciente.
+                          </div>
+                        )}
                       </div>
                     )}
                   </TabsContent>

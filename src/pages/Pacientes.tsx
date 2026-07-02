@@ -20,7 +20,7 @@ import { cn } from '../lib/utils';
 import { PatientModal } from '../components/PatientModal';
 
 export function Pacientes() {
-  const { patients } = useStore();
+  const { patients, appointments, finance } = useStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
@@ -201,50 +201,123 @@ export function Pacientes() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {filteredPatients.map((patient) => (
-          <Card 
-            key={patient.id} 
-            className="group bg-white border-slate-100 rounded-[2.5rem] p-6 shadow-sm hover:shadow-xl transition-all cursor-pointer relative overflow-hidden"
-            onClick={() => setSelectedPatientId(patient.id)}
-          >
-            <div className="absolute top-0 right-0 p-6 opacity-0 group-hover:opacity-100 transition-opacity">
-              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
-                <ArrowUpRight className="w-5 h-5" />
-              </div>
-            </div>
+        {filteredPatients.map((patient) => {
+          const paidTransactions = finance.filter(f => f.patientId === patient.id && f.type === 'receita' && f.status === 'pago');
+          const pendingTransactions = finance.filter(f => f.patientId === patient.id && f.type === 'receita' && f.status === 'pendente');
+          const cardTransactions = finance.filter(f => f.patientId === patient.id && f.paymentMethod === 'cartão de crédito');
+          
+          const totalPaid = paidTransactions.reduce((acc, f) => acc + f.amount, 0);
+          const totalPending = pendingTransactions.reduce((acc, f) => acc + f.amount, 0);
 
-            <div className="flex flex-col items-center text-center space-y-4">
-              <div className="relative">
-                <div className="w-24 h-24 bg-slate-50 rounded-[2rem] flex items-center justify-center text-3xl font-black text-slate-300 overflow-hidden group-hover:bg-indigo-600 group-hover:text-white transition-all duration-500 border border-slate-100 shadow-inner">
-                  {patient.profilePicture ? (
-                    <img 
-                      src={patient.profilePicture} 
-                      alt={patient.name} 
-                      className="w-full h-full object-cover rounded-[2rem]" 
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    patient.name.charAt(0)
+          let paymentScore = 100;
+          if (pendingTransactions.length > 0) {
+            paymentScore -= 10;
+            paymentScore -= Math.min(30, Math.floor(totalPending / 100));
+            
+            const overdueTxs = pendingTransactions.filter(f => {
+              const [year, month, day] = f.dueDate.split('-');
+              const due = new Date(Number(year), Number(month) - 1, Number(day));
+              return due < new Date();
+            });
+            
+            if (overdueTxs.length > 0) {
+              paymentScore -= 20;
+              const oldestDue = overdueTxs.reduce((oldest, f) => {
+                const [year, month, day] = f.dueDate.split('-');
+                const due = new Date(Number(year), Number(month) - 1, Number(day));
+                return due < oldest ? due : oldest;
+              }, new Date());
+              const diffDays = Math.ceil(Math.abs(new Date().getTime() - oldestDue.getTime()) / (1000 * 60 * 60 * 24));
+              paymentScore -= Math.min(30, diffDays * 0.5);
+            }
+          }
+          if (cardTransactions.length > 0) {
+            const avgInstallments = cardTransactions.reduce((sum, f) => sum + (f.cardInstallments || 1), 0) / cardTransactions.length;
+            if (avgInstallments > 10) {
+              paymentScore -= 10;
+            } else if (avgInstallments > 6) {
+              paymentScore -= 5;
+            }
+          }
+          paymentScore = Math.max(0, Math.round(paymentScore));
+
+          return (
+            <Card 
+              key={patient.id} 
+              className="group bg-white border-slate-100 rounded-[2.5rem] p-6 shadow-sm hover:shadow-xl transition-all cursor-pointer relative overflow-hidden"
+              onClick={() => setSelectedPatientId(patient.id)}
+            >
+              <div className="absolute top-0 right-0 p-6 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
+                  <ArrowUpRight className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div className="flex flex-col items-center text-center space-y-4">
+                <div className="relative">
+                  <div className="w-24 h-24 bg-slate-50 rounded-[2rem] flex items-center justify-center text-3xl font-black text-slate-300 overflow-hidden group-hover:bg-indigo-600 group-hover:text-white transition-all duration-500 border border-slate-100 shadow-inner">
+                    {patient.profilePicture ? (
+                      <img 
+                        src={patient.profilePicture} 
+                        alt={patient.name} 
+                        className="w-full h-full object-cover rounded-[2rem]" 
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      patient.name.charAt(0)
+                    )}
+                  </div>
+                  <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-white rounded-xl shadow-md flex items-center justify-center">
+                    <UserCheck className="w-4 h-4 text-emerald-500" />
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-black text-slate-900 italic leading-none capitalize">{patient.name}</h3>
+                  <p className="text-[10px] font-black text-indigo-500 mt-2 tracking-widest italic uppercase">{patient.status}</p>
+                </div>
+
+                <div className="w-full space-y-2 pt-4 border-t border-slate-50">
+                  <div className="flex items-center justify-center gap-2 text-slate-500 text-sm font-medium italic">
+                    <Phone className="w-3.5 h-3.5" />
+                    {patient.phone || '(00) 00000-0000'}
+                  </div>
+                  <div className="flex items-center justify-center gap-2 text-slate-500 text-xs font-medium italic">
+                    <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+                    Última visita: {patient.lastVisit ? new Date(patient.lastVisit).toLocaleDateString() : 'Não informado'}
+                  </div>
+                </div>
+
+                <div className="w-full space-y-2 pt-3 border-t border-slate-50 font-sans text-xs">
+                  <div className="flex justify-between items-center font-bold">
+                    <span className="text-slate-400">Saúde Fin.</span>
+                    <span className={cn(
+                      "px-2 py-0.5 rounded-full text-[9px] font-black border flex items-center gap-1",
+                      paymentScore >= 90 ? "bg-green-50 text-green-700 border-green-200" :
+                      paymentScore >= 70 ? "bg-blue-50 text-blue-700 border-blue-200" :
+                      paymentScore >= 50 ? "bg-amber-50 text-amber-705 border-amber-250 animate-pulse" :
+                      "bg-red-50 text-red-700 border-red-200 animate-shake"
+                    )}>
+                      <span>{paymentScore >= 90 ? '🟢' : paymentScore >= 70 ? '🔵' : paymentScore >= 50 ? '🟡' : '🔴'}</span>
+                      <span>{paymentScore}/100</span>
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between items-center font-bold">
+                    <span className="text-slate-400">Total Pago</span>
+                    <span className="text-slate-700 font-extrabold font-mono">
+                      R$ {totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+
+                  {totalPending > 0 && (
+                    <div className="flex justify-between items-center font-bold">
+                      <span className="text-slate-400">Pendente</span>
+                      <span className="text-red-650 font-black font-mono">
+                        R$ {totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
                   )}
-                </div>
-                <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-white rounded-xl shadow-md flex items-center justify-center">
-                  <UserCheck className="w-4 h-4 text-emerald-500" />
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-xl font-black text-slate-900 italic leading-none italic capitalize">{patient.name}</h3>
-                <p className="text-[10px] font-black text-indigo-500 mt-2 tracking-widest italic uppercase">{patient.status}</p>
-              </div>
-
-              <div className="w-full space-y-2 pt-4 border-t border-slate-50">
-                <div className="flex items-center justify-center gap-2 text-slate-500 text-sm font-medium italic">
-                  <Phone className="w-3.5 h-3.5" />
-                  {patient.phone || '(00) 00000-0000'}
-                </div>
-                <div className="flex items-center justify-center gap-2 text-slate-500 text-xs font-medium italic">
-                  <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-                  Última visita: {patient.lastVisit ? new Date(patient.lastVisit).toLocaleDateString() : 'Não informado'}
                 </div>
               </div>
 
@@ -277,9 +350,8 @@ export function Pacientes() {
                   <MoreHorizontal className="w-4 h-4" />
                 </Button>
               </div>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          )})}
       </div>
 
       <PatientModal 

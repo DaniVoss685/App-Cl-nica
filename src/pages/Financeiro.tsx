@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
+import { Input } from '../components/ui/input';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -18,6 +19,7 @@ import {
   CheckCircle2,
   Clock,
   AlertTriangle,
+  AlertCircle,
   Link as LinkIcon,
   Trash2,
   Pencil,
@@ -33,7 +35,8 @@ import {
   Award,
   Crown,
   Search,
-  ChevronRight
+  ChevronRight,
+  ArrowLeftRight
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -66,51 +69,144 @@ export function Financeiro() {
   const [filter, setFilter] = useState<'tudo' | 'receita' | 'despesa'>('tudo');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Tab controller from search params
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') || 'movimentacoes';
+  const activeTab = searchParams.get('tab') || 'painel'; // 'painel' or 'ranking'
 
-  const setActiveTab = (tab: 'movimentacoes' | 'graficos' | 'ranking') => {
+  const setActiveTab = (tab: 'painel' | 'ranking') => {
     setSearchParams({ tab });
+  };
+
+  // Month navigation state
+  const currentMonthStr = format(new Date(), 'yyyy-MM');
+  const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthStr);
+
+  // Compute all available months dynamically
+  const availableMonths = useMemo(() => {
+    const months = new Set<string>();
+    finance.forEach(f => {
+      const dateStr = (f.status === 'pago' && f.paymentDate) ? f.paymentDate : f.dueDate;
+      if (dateStr && dateStr.length >= 7) {
+        months.add(dateStr.substring(0, 7)); // 'yyyy-MM'
+      }
+    });
+    months.add(currentMonthStr);
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }, [finance, currentMonthStr]);
+
+  const formatMonthLabel = (monthStr: string) => {
+    if (monthStr === 'todos') return 'Todo o Histórico';
+    const [year, month] = monthStr.split('-');
+    const date = new Date(Number(year), Number(month) - 1, 1);
+    const label = format(date, 'MMMM yyyy', { locale: ptBR });
+    return label.charAt(0).toUpperCase() + label.slice(1);
   };
 
   // Stats calculation
   const stats = useMemo(() => {
-    const today = new Date();
-    const currentMonthFinance = finance.filter(f => {
-      const date = new Date(f.dueDate);
-      return isWithinInterval(date, { start: startOfMonth(today), end: endOfMonth(today) });
+    const filtered = finance.filter(f => {
+      const dateStr = (f.status === 'pago' && f.paymentDate) ? f.paymentDate : f.dueDate;
+      if (selectedMonth === 'todos') return true;
+      return dateStr && dateStr.startsWith(selectedMonth);
     });
 
-    const income = currentMonthFinance.filter(f => f.type === 'receita' && f.status === 'pago').reduce((acc, f) => acc + f.amount, 0);
-    const expenses = currentMonthFinance.filter(f => f.type === 'despesa').reduce((acc, f) => acc + f.amount, 0);
-    const pendingIncome = currentMonthFinance.filter(f => f.type === 'receita' && f.status === 'pendente').reduce((acc, f) => acc + f.amount, 0);
+    const income = filtered.filter(f => f.type === 'receita' && f.status === 'pago').reduce((acc, f) => acc + f.amount, 0);
+    const expenses = filtered.filter(f => f.type === 'despesa').reduce((acc, f) => acc + f.amount, 0);
+    const pendingIncome = filtered.filter(f => f.type === 'receita' && f.status === 'pendente').reduce((acc, f) => acc + f.amount, 0);
 
     return { income, expenses, balance: income - expenses, pendingIncome };
-  }, [finance]);
+  }, [finance, selectedMonth]);
 
-  const totalRevenue = useMemo(() => finance.filter(f => f.type === 'receita' && f.status === 'pago').reduce((acc, f) => acc + f.amount, 0), [finance]);
-  const uniquePaidPatientsCount = useMemo(() => new Set(finance.filter(f => f.type === 'receita' && f.status === 'pago').map(f => f.patientId)).size, [finance]);
+  // Overall metrics filtered by selected month/all-time
+  const totalRevenue = useMemo(() => {
+    return finance.filter(f => {
+      const dateStr = (f.status === 'pago' && f.paymentDate) ? f.paymentDate : f.dueDate;
+      const matchesMonth = selectedMonth === 'todos' || (dateStr && dateStr.startsWith(selectedMonth));
+      return matchesMonth && f.type === 'receita' && f.status === 'pago';
+    }).reduce((acc, f) => acc + f.amount, 0);
+  }, [finance, selectedMonth]);
+
+  const uniquePaidPatientsCount = useMemo(() => {
+    return new Set(finance.filter(f => {
+      const dateStr = (f.status === 'pago' && f.paymentDate) ? f.paymentDate : f.dueDate;
+      const matchesMonth = selectedMonth === 'todos' || (dateStr && dateStr.startsWith(selectedMonth));
+      return matchesMonth && f.type === 'receita' && f.status === 'pago';
+    }).map(f => f.patientId)).size;
+  }, [finance, selectedMonth]);
+
   const ltv = useMemo(() => uniquePaidPatientsCount > 0 ? totalRevenue / uniquePaidPatientsCount : 0, [totalRevenue, uniquePaidPatientsCount]);
 
-  const approvedBudgets = useMemo(() => (budgets || []).filter(b => b.status === 'aprovado' || b.status === 'fechado').length, [budgets]);
-  const totalBudgets = useMemo(() => (budgets || []).length, [budgets]);
+  const approvedBudgets = useMemo(() => {
+    return (budgets || []).filter(b => {
+      const matchesMonth = selectedMonth === 'todos' || (b.createdAt && b.createdAt.startsWith(selectedMonth));
+      return matchesMonth && (b.status === 'aprovado' || b.status === 'fechado');
+    }).length;
+  }, [budgets, selectedMonth]);
+
+  const totalBudgets = useMemo(() => {
+    return (budgets || []).filter(b => {
+      const matchesMonth = selectedMonth === 'todos' || (b.createdAt && b.createdAt.startsWith(selectedMonth));
+      return matchesMonth;
+    }).length;
+  }, [budgets, selectedMonth]);
+
   const conversion = useMemo(() => totalBudgets > 0 ? Math.round((approvedBudgets / totalBudgets) * 100) : 0, [approvedBudgets, totalBudgets]);
 
+  // Ranking & Loyalty list filter states
   const [rankingSearch, setRankingSearch] = useState('');
   const [rankingTierFilter, setRankingTierFilter] = useState<'todos' | 'Diamante' | 'Platina' | 'Ouro' | 'Prata' | 'Bronze'>('todos');
+  const [rankingSort, setRankingSort] = useState<'totalPaid' | 'paymentScore'>('totalPaid');
 
   // Compute patient spend ranking and metadata
   const patientRankings = useMemo(() => {
     return patients.map(p => {
       const paidTransactions = finance.filter(f => f.patientId === p.id && f.type === 'receita' && f.status === 'pago');
       const pendingTransactions = finance.filter(f => f.patientId === p.id && f.type === 'receita' && f.status === 'pendente');
+      const cardTransactions = finance.filter(f => f.patientId === p.id && f.paymentMethod === 'cartão de crédito');
       
       const totalPaid = paidTransactions.reduce((acc, f) => acc + f.amount, 0);
       const totalPending = pendingTransactions.reduce((acc, f) => acc + f.amount, 0);
       const appointmentsCount = appointments.filter(a => a.patientId === p.id).length;
       
+      let paymentScore = 100;
+      
+      if (pendingTransactions.length > 0) {
+        paymentScore -= 10;
+        paymentScore -= Math.min(30, Math.floor(totalPending / 100));
+        
+        const overdueTxs = pendingTransactions.filter(f => {
+          const [year, month, day] = f.dueDate.split('-');
+          const due = new Date(Number(year), Number(month) - 1, Number(day));
+          return due < new Date();
+        });
+        
+        if (overdueTxs.length > 0) {
+          paymentScore -= 20;
+          
+          const oldestDue = overdueTxs.reduce((oldest, f) => {
+            const [year, month, day] = f.dueDate.split('-');
+            const due = new Date(Number(year), Number(month) - 1, Number(day));
+            return due < oldest ? due : oldest;
+          }, new Date());
+          
+          const diffDays = Math.ceil(Math.abs(new Date().getTime() - oldestDue.getTime()) / (1000 * 60 * 60 * 24));
+          paymentScore -= Math.min(30, diffDays * 0.5);
+        }
+      }
+      
+      if (cardTransactions.length > 0) {
+        const avgInstallments = cardTransactions.reduce((sum, f) => sum + (f.cardInstallments || 1), 0) / cardTransactions.length;
+        if (avgInstallments > 10) {
+          paymentScore -= 10;
+        } else if (avgInstallments > 6) {
+          paymentScore -= 5;
+        }
+      }
+      
+      paymentScore = Math.max(0, Math.round(paymentScore));
+
       let tier: 'Bronze' | 'Prata' | 'Ouro' | 'Platina' | 'Diamante' | 'Novo' = 'Novo';
       let badgeColor = "bg-slate-50 text-slate-500 border border-slate-200 font-extrabold";
       
@@ -136,6 +232,7 @@ export function Financeiro() {
         totalPaid,
         totalPending,
         appointmentsCount,
+        paymentScore,
         tier,
         badgeColor
       };
@@ -147,58 +244,120 @@ export function Financeiro() {
       const matchesTier = rankingTierFilter === 'todos' || p.tier === rankingTierFilter;
       return matchesSearch && matchesTier;
     })
-    .sort((a, b) => b.totalPaid - a.totalPaid);
-  }, [patients, finance, appointments, rankingSearch, rankingTierFilter]);
+    .sort((a, b) => {
+      if (rankingSort === 'paymentScore') {
+        return a.paymentScore - b.paymentScore; // Show lowest scores (debtors/late payers) first
+      }
+      return b.totalPaid - a.totalPaid;
+    });
+  }, [patients, finance, appointments, rankingSearch, rankingTierFilter, rankingSort]);
 
+  // Unified dashboard filtered finance transactions
   const filteredFinance = useMemo(() => {
-    return finance.filter(f => filter === 'tudo' || f.type === filter)
-      .sort((a, b) => b.dueDate.localeCompare(a.dueDate));
-  }, [finance, filter]);
+    return finance.filter(f => {
+      // 1. Month filter
+      const dateStr = (f.status === 'pago' && f.paymentDate) ? f.paymentDate : f.dueDate;
+      const matchesMonth = selectedMonth === 'todos' || (dateStr && dateStr.startsWith(selectedMonth));
+      if (!matchesMonth) return false;
+
+      // 2. Type filter
+      const matchesType = filter === 'tudo' || f.type === filter;
+      if (!matchesType) return false;
+
+      // 3. Search term filter
+      if (searchTerm) {
+        const patient = patients.find(p => p.id === f.patientId);
+        const pName = (patient?.name || '').toLowerCase();
+        const desc = (f.description || '').toLowerCase();
+        const cat = (f.category || '').toLowerCase();
+        const method = (f.paymentMethod || '').toLowerCase();
+        const term = searchTerm.toLowerCase();
+        return pName.includes(term) || desc.includes(term) || cat.includes(term) || method.includes(term);
+      }
+
+      return true;
+    }).sort((a, b) => {
+      const dateA = (a.status === 'pago' && a.paymentDate) ? a.paymentDate : a.dueDate;
+      const dateB = (b.status === 'pago' && b.paymentDate) ? b.paymentDate : b.dueDate;
+      return dateB.localeCompare(dateA);
+    });
+  }, [finance, filter, selectedMonth, searchTerm, patients]);
 
   // Dynamically correlated chart data based on actual transactions
   const revenueData = useMemo(() => {
-    const daysOfWeek = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
-    const mapped = daysOfWeek.map((day, idx) => {
-      // Filter transactions falling on this day of the week
-      const totalForDay = finance
-        .filter(f => {
-          const date = new Date(f.dueDate + 'T12:00:00');
-          return date.getDay() === idx && f.type === 'receita';
-        })
-        .reduce((sum, f) => sum + f.amount, 0);
-        
-      return {
-        day,
-        value: totalForDay
-      };
-    });
-    
-    // Rotate the array so today is the last day
-    const todayIdx = new Date().getDay();
-    const rotated = [];
-    for (let i = 1; i <= 7; i++) {
-      const j = (todayIdx + i) % 7;
-      rotated.push(mapped[j]);
+    if (selectedMonth === 'todos') {
+      const monthsLabel = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+      return monthsLabel.map((month, idx) => {
+        const total = finance
+          .filter(f => {
+            const dateStr = (f.status === 'pago' && f.paymentDate) ? f.paymentDate : f.dueDate;
+            if (!dateStr || f.type !== 'receita') return false;
+            const m = parseInt(dateStr.split('-')[1]);
+            return m === idx + 1;
+          })
+          .reduce((sum, f) => sum + f.amount, 0);
+        return { name: month, Faturamento: total };
+      });
+    } else {
+      const [yearStr, monthStr] = selectedMonth.split('-');
+      const year = parseInt(yearStr);
+      const month = parseInt(monthStr);
+      const numDays = new Date(year, month, 0).getDate();
+      
+      const data = [];
+      for (let day = 1; day <= numDays; day++) {
+        const dayStr = String(day).padStart(2, '0');
+        const datePrefix = `${selectedMonth}-${dayStr}`;
+        const total = finance
+          .filter(f => {
+            const dateStr = (f.status === 'pago' && f.paymentDate) ? f.paymentDate : f.dueDate;
+            return dateStr && dateStr.startsWith(datePrefix) && f.type === 'receita';
+          })
+          .reduce((sum, f) => sum + f.amount, 0);
+          
+        data.push({
+          name: `${dayStr}`,
+          Faturamento: total
+        });
+      }
+      return data;
     }
-    return rotated;
-  }, [finance]);
+  }, [finance, selectedMonth]);
 
   const servicesData = useMemo(() => {
     const categories = Array.from(new Set(finance.map(f => f.category || 'Geral')));
-    const list = categories.map(cat => {
+    return categories.map(cat => {
       const rev = finance
-        .filter(f => f.category === cat && f.type === 'receita' && f.status === 'pago')
+        .filter(f => {
+          const dateStr = (f.status === 'pago' && f.paymentDate) ? f.paymentDate : f.dueDate;
+          const matchesMonth = selectedMonth === 'todos' || (dateStr && dateStr.startsWith(selectedMonth));
+          return matchesMonth && f.category === cat && f.type === 'receita' && f.status === 'pago';
+        })
         .reduce((acc, f) => acc + f.amount, 0);
-      const count = finance.filter(f => f.category === cat && f.type === 'receita').length;
-      return { name: cat, count, revenue: rev };
-    }).filter(item => item.revenue > 0);
-    
-    // Fallback if empty to make UI look complete (Desativado para manter dados 100% reais)
-    if (list.length === 0) {
-      return [];
-    }
-    return list.sort((a, b) => b.revenue - a.revenue);
-  }, [finance]);
+      return { name: cat, revenue: rev };
+    }).filter(item => item.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [finance, selectedMonth]);
+
+  // Export current list to CSV
+  const handleExportCSV = () => {
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Status,Descricao,Vinculo,Vencimento,Categoria,Valor\r\n";
+    filteredFinance.forEach(f => {
+      const patient = patients.find(p => p.id === f.patientId);
+      const pName = patient ? patient.name : 'Geral';
+      const row = `"${f.status}","${f.description}","${pName}","${f.dueDate}","${f.category || 'Geral'}",${f.amount}`;
+      csvContent += row + "\r\n";
+    });
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `lancamentos_${selectedMonth}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Arquivo CSV exportado com sucesso!');
+  };
 
   return (
     <motion.div 
@@ -207,48 +366,50 @@ export function Financeiro() {
       transition={{ duration: 0.4, ease: "easeOut" }}
       className="p-6 space-y-8 max-w-[1600px] mx-auto select-none"
     >
-      {/* Dynamic Header based on active tab */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-black text-slate-900 italic lowercase">
-            {activeTab === 'movimentacoes' && "controle financeiro"}
-            {activeTab === 'graficos' && "análises e relatórios"}
-            {activeTab === 'ranking' && "ranking de faturamento por paciente"}
+            {activeTab === 'painel' ? "dashboard financeiro" : "ranking de faturamento por paciente"}
           </h1>
           <p className="text-slate-500 lowercase">
-            {activeTab === 'movimentacoes' && "fluxo de caixa em tempo real, lançamentos e conciliação bancária."}
-            {activeTab === 'graficos' && "curva de faturamento, novos pacientes adquiridos e distribuição de receita por serviço."}
-            {activeTab === 'ranking' && "classificação e ranking de pacientes ordenados pelo valor total de receitas quitadas na clínica."}
+            {activeTab === 'painel' 
+              ? "fluxo de caixa, gráficos dinâmicos de faturamento e lançamentos consolidados." 
+              : "classificação e ranking de pacientes ordenados pelo valor total de receitas quitadas."}
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {activeTab === 'graficos' && (
-            <Button 
-              onClick={() => toast.success('Relatório financeiro exportado para PDF!')}
-              className="bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl h-11 px-6 shadow-xl transition-all"
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Period/Month selector */}
+          <div className="relative group shrink-0">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[9px] font-black text-indigo-600 uppercase tracking-wider select-none">Mês:</span>
+            <select
+              value={selectedMonth}
+              onChange={e => setSelectedMonth(e.target.value)}
+              className="h-11 pl-12 pr-6 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 text-xs focus:ring-indigo-500 focus:outline-none cursor-pointer"
             >
-              <Download className="w-4 h-4 mr-2" />
-              exportar PDF
-            </Button>
-          )}
+              <option value="todos">Todo o Histórico</option>
+              {availableMonths.map(m => (
+                <option key={m} value={m}>{formatMonthLabel(m)}</option>
+              ))}
+            </select>
+          </div>
 
-          {activeTab === 'movimentacoes' && (
+          {activeTab === 'painel' && (
             <>
               <Button 
                 variant="outline" 
-                onClick={() => toast.success('Transferências bancárias e exportação CSV geradas!')}
-                className="h-11 px-6 rounded-xl border-slate-200 shadow-sm italic font-bold"
+                onClick={handleExportCSV}
+                className="h-11 px-6 rounded-xl border-slate-200 shadow-sm italic font-bold cursor-pointer"
               >
                 <Download className="w-4 h-4 mr-2" />
-                exportar lançamentos
+                exportar CSV
               </Button>
               <Button 
                 onClick={() => {
                   setSelectedTransactionId(null);
                   setIsModalOpen(true);
                 }}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl h-11 px-6 shadow-lg shadow-indigo-100 italic lowercase"
+                className="bg-indigo-650 hover:bg-indigo-700 text-white font-bold rounded-xl h-11 px-6 shadow-lg shadow-indigo-100 italic lowercase cursor-pointer"
               >
                 <Plus className="w-5 h-5 mr-2" />
                 lançar pagamento
@@ -258,450 +419,422 @@ export function Financeiro() {
         </div>
       </div>
 
-      {/* Modern Tab Indicators */}
+      {/* Tabs list navigation */}
       <div className="flex border-b border-slate-100 pb-px gap-1">
         <button
-          onClick={() => setActiveTab('movimentacoes')}
+          onClick={() => setActiveTab('painel')}
           className={cn(
-            "pb-4 px-6 text-xs font-black italic uppercase border-b-2 transition-all tracking-wider",
-            activeTab === 'movimentacoes' 
+            "pb-4 px-6 text-xs font-black italic uppercase border-b-2 transition-all tracking-wider cursor-pointer",
+            activeTab === 'painel' 
               ? "border-b-indigo-600 text-indigo-600" 
-              : "border-b-transparent text-slate-400 hover:text-slate-600"
+              : "border-b-transparent text-slate-400 hover:text-slate-650"
           )}
         >
-          Caixa & Lançamentos
-        </button>
-        <button
-          onClick={() => setActiveTab('graficos')}
-          className={cn(
-            "pb-4 px-6 text-xs font-black italic uppercase border-b-2 transition-all tracking-wider flex items-center gap-2",
-            activeTab === 'graficos' 
-              ? "border-b-indigo-600 text-indigo-600" 
-              : "border-b-transparent text-slate-400 hover:text-slate-600"
-          )}
-        >
-          <BarChart3 className="w-4 h-4" />
-          Análises & Gráficos
+          Painel & Caixa
         </button>
         <button
           onClick={() => setActiveTab('ranking')}
           className={cn(
-            "pb-4 px-6 text-xs font-black italic uppercase border-b-2 transition-all tracking-wider flex items-center gap-2",
+            "pb-4 px-6 text-xs font-black italic uppercase border-b-2 transition-all tracking-wider flex items-center gap-2 cursor-pointer",
             activeTab === 'ranking' 
               ? "border-b-indigo-600 text-indigo-600" 
-              : "border-b-transparent text-slate-400 hover:text-slate-600"
+              : "border-b-transparent text-slate-400 hover:text-slate-650"
           )}
         >
-          <Award className="w-4 h-4 text-indigo-650" />
+          <Award className="w-4 h-4 text-indigo-600" />
           Ranking de Pacientes
         </button>
       </div>
 
-      <AnimatePresence mode="wait">
-        {activeTab === 'movimentacoes' && (
-          <motion.div
-            key="caixa-tab"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.2 }}
-            className="space-y-8"
-          >
-            {/* Cards Grid */}
-            <motion.div 
-              variants={{
-                hidden: { opacity: 0 },
-                show: { opacity: 1, transition: { staggerChildren: 0.05 } }
-              }}
-              initial="hidden"
-              animate="show"
-              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"
-            >
-              <motion.div
-                variants={{ hidden: { opacity: 0, y: 15 }, show: { opacity: 1, y: 0 } }}
-                whileHover={{ y: -3 }}
-              >
-                <Card className="p-6 bg-white border-slate-200 rounded-[2rem] shadow-sm relative overflow-hidden group cursor-pointer select-none h-full">
-                  <div className="absolute top-0 right-0 p-6 text-green-100 group-hover:text-green-50 transition-colors">
-                    <TrendingUp className="w-20 h-20" />
-                  </div>
-                  <div className="relative">
-                    <p className="text-[10px] font-black tracking-widest text-slate-400 mb-1 italic uppercase">Receitas (mês)</p>
-                    <h3 className="text-3xl font-black text-slate-900 font-mono italic">
-                      R$ {stats.income.toLocaleString()}
-                    </h3>
-                    <div className="flex items-center gap-1 text-green-600 mt-2 text-xs font-bold italic">
-                      <ArrowUpRight className="w-3 h-3 text-green-500" />
-                      12% vs mês ant.
-                    </div>
-                  </div>
-                </Card>
-              </motion.div>
+      {/* Alert on outstanding debts */}
+      {(() => {
+        const patientsWithDebts = patients.map(p => {
+          const pendingTxs = finance.filter(f => f.patientId === p.id && f.type === 'receita' && f.status === 'pendente');
+          const totalPending = pendingTxs.reduce((sum, f) => sum + f.amount, 0);
+          return { ...p, totalPending };
+        }).filter(p => p.totalPending > 0);
 
-              <motion.div
-                variants={{ hidden: { opacity: 0, y: 15 }, show: { opacity: 1, y: 0 } }}
-                whileHover={{ y: -3 }}
-              >
-                <Card className="p-6 bg-white border-slate-200 rounded-[2rem] shadow-sm relative overflow-hidden group cursor-pointer select-none h-full">
-                  <div className="absolute top-0 right-0 p-6 text-red-100 group-hover:text-red-50 transition-colors">
-                    <TrendingDown className="w-20 h-20" />
-                  </div>
-                  <div className="relative">
-                    <p className="text-[10px] font-black tracking-widest text-slate-400 mb-1 italic uppercase">Despesas (mês)</p>
-                    <h3 className="text-3xl font-black text-slate-900 font-mono italic">
-                      R$ {stats.expenses.toLocaleString()}
-                    </h3>
-                    <div className="flex items-center gap-1 text-red-600 mt-2 text-xs font-bold italic">
-                      <ArrowDownRight className="w-3 h-3" />
-                      4% vs mês ant.
-                    </div>
-                  </div>
-                </Card>
-              </motion.div>
+        if (patientsWithDebts.length === 0) return null;
 
-              <motion.div
-                variants={{ hidden: { opacity: 0, y: 15 }, show: { opacity: 1, y: 0 } }}
-                whileHover={{ y: -3 }}
-              >
-                <Card className="p-6 bg-indigo-600 rounded-[2rem] shadow-xl relative overflow-hidden group cursor-pointer select-none h-full">
-                  <div className="absolute top-0 right-0 p-6 text-white/5 transition-colors">
-                    <DollarSign className="w-20 h-20" />
-                  </div>
-                  <div className="relative text-white">
-                    <p className="text-[10px] font-black tracking-widest opacity-60 mb-1 italic uppercase">Saldo projetado</p>
-                    <h3 className="text-3xl font-black font-mono italic">
-                      R$ {stats.balance.toLocaleString()}
-                    </h3>
-                    <div className="flex items-center gap-1 mt-2 text-xs font-bold opacity-80 italic">
-                      Mês de {format(new Date(), 'MMMM', { locale: ptBR })}
-                    </div>
-                  </div>
-                </Card>
-              </motion.div>
+        const totalPendingOverall = patientsWithDebts.reduce((sum, p) => sum + p.totalPending, 0);
 
-              <motion.div
-                variants={{ hidden: { opacity: 0, y: 15 }, show: { opacity: 1, y: 0 } }}
-                whileHover={{ y: -3 }}
-              >
-                <Card className="p-6 bg-amber-500 rounded-[2rem] shadow-xl relative overflow-hidden group cursor-pointer select-none h-full">
-                  <div className="absolute top-0 right-0 p-6 text-white/5 transition-colors">
-                    <Clock className="w-20 h-20" />
-                  </div>
-                  <div className="relative text-white">
-                    <p className="text-[10px] font-black tracking-widest opacity-60 mb-1 italic uppercase">A receber (pendentes)</p>
-                    <h3 className="text-3xl font-black font-mono italic">
-                      R$ {stats.pendingIncome.toLocaleString()}
-                    </h3>
-                    <div className="flex items-center gap-1 mt-2 text-xs font-bold opacity-80 italic">
-                      <AlertTriangle className="w-3 h-3 animate-pulse" />
-                      Ação necessária
-                    </div>
-                  </div>
-                </Card>
-              </motion.div>
-            </motion.div>
-
-            {/* List and tools layout */}
-            <div className="flex flex-col gap-6">
-              <div className="flex items-center justify-between">
-                <div className="flex gap-2">
-                  {(['tudo', 'receita', 'despesa'] as const).map((type) => (
-                    <button
-                      key={type}
-                      onClick={() => setFilter(type)}
-                      className={cn(
-                        "px-4 h-10 rounded-xl text-xs font-bold transition-all tracking-wider border capitalize",
-                        filter === type 
-                          ? "bg-slate-900 text-white border-slate-900 shadow-md" 
-                          : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
-                      )}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
+        return (
+          <div className="bg-amber-50/70 border border-amber-100/70 rounded-3xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in duration-300">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100/80 flex items-center justify-center text-amber-600 shrink-0">
+                <AlertCircle className="w-5 h-5" />
               </div>
-
-              <Card className="bg-white border-slate-200 rounded-[2rem] shadow-sm overflow-hidden border-b-8 border-b-indigo-500">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-100 bg-slate-50/50">
-                        <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest">STATUS</th>
-                        <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest">DESCRIÇÃO</th>
-                        <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest">VÍNCULO</th>
-                        <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest">VENCIMENTO</th>
-                        <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest">CATEGORIA</th>
-                        <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest text-right">VALOR</th>
-                        <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest text-center">AÇÕES</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredFinance.map((f) => {
-                        const patient = patients.find(p => p.id === f.patientId);
-                        const appointment = appointments.find(a => a.id === f.appointmentId);
-                        
-                        return (
-                          <tr key={f.id} className="border-b border-slate-50 hover:bg-slate-50/30 transition-colors group">
-                            <td className="p-4">
-                              <Badge className={cn(
-                                "text-[9px] font-black italic px-2 border-none capitalize",
-                                f.status.toLowerCase() === 'pago' ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700 shadow-sm"
-                              )}>
-                                {f.status}
-                              </Badge>
-                            </td>
-                            <td className="p-4">
-                              <div>
-                                <p className="font-bold text-slate-900 text-sm italic leading-tight">
-                                  {f.description || f.category || (f.type === 'receita' ? `Recebimento: ${patient?.name}` : 'Despesa operacional')}
-                                </p>
-                                <div className="flex items-center gap-2 mt-1.5">
-                                  <span className="text-[10px] text-slate-400 font-bold tracking-tighter capitalize bg-slate-100 px-1.5 py-0.5 rounded">
-                                    {f.paymentMethod || 'não especificado'}
-                                  </span>
-                                  {f.description && (
-                                    <span className="text-[10px] text-indigo-500 font-bold tracking-tight">
-                                      • {f.category}
-                                    </span>
-                                  )}
-                                  {f.type === 'receita' && patient && f.description && (
-                                    <span className="text-[10px] text-emerald-600 font-bold tracking-tight">
-                                      • Paciente: {patient.name}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </td>
-                            <td className="p-4">
-                              {appointment ? (
-                                <div className="flex items-center gap-2 text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg w-fit">
-                                  <LinkIcon className="w-3 h-3" />
-                                  <span className="text-[10px] font-bold italic">Agendamento {format(new Date(appointment.date + 'T12:00:00'), 'dd/MM')}</span>
-                                </div>
-                              ) : (
-                                <span className="text-[10px] text-slate-300 italic">Sem vínculo</span>
-                              )}
-                            </td>
-                            <td className="p-4">
-                              <div className="flex items-center gap-2 text-slate-600 font-mono text-sm">
-                                <Calendar className="w-3 h-3 text-slate-400" />
-                                {format(new Date(f.dueDate + 'T12:00:00'), 'dd/MM/yyyy')}
-                              </div>
-                            </td>
-                            <td className="p-4">
-                              <Badge variant="outline" className="text-[9px] border-slate-200 text-slate-500 font-bold px-2 italic">
-                                {f.category || 'Geral'}
-                              </Badge>
-                            </td>
-                            <td className="p-4 text-right">
-                              <span className={cn(
-                                "font-mono font-black italic text-lg",
-                                f.type.toLowerCase() === 'receita' ? "text-green-600" : "text-red-600"
-                              )}>
-                                {f.type.toLowerCase() === 'receita' ? '+' : '-'} R$ {f.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                              </span>
-                            </td>
-                            <td className="p-4">
-                              <div className="flex justify-center">
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400">
-                                      <MoreVertical className="w-4 h-4" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    <DropdownMenuItem 
-                                      className="flex gap-2 italic font-bold"
-                                      onClick={() => {
-                                        updateFinance(f.id, { status: 'pago', paymentDate: format(new Date(), 'yyyy-MM-dd') });
-                                        toast.success('Lançamento registrado como pago!');
-                                      }}
-                                      disabled={f.status === 'pago'}
-                                    >
-                                      <CheckCircle2 className="w-4 h-4 text-green-600" /> Marcar como pago
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem 
-                                      className="flex gap-2 italic font-bold"
-                                      onClick={() => {
-                                        setSelectedTransactionId(f.id);
-                                        setIsModalOpen(true);
-                                      }}
-                                    >
-                                      <Pencil className="w-4 h-4" /> Editar lançamento
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem 
-                                      className="flex gap-2 italic font-bold text-red-600 focus:text-red-600"
-                                      onClick={() => {
-                                        if (confirm('Deseja realmente excluir este lançamento?')) {
-                                          removeFinance(f.id);
-                                          toast.error('Lançamento excluído.');
-                                        }
-                                      }}
-                                    >
-                                      <Trash2 className="w-4 h-4" /> Excluir lançamento
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
+              <div>
+                <p className="text-sm font-black text-amber-900 leading-tight">Existem {patientsWithDebts.length} pacientes com débitos pendentes</p>
+                <p className="text-xs text-amber-700 font-medium">O total acumulado em aberto é de <span className="font-bold">R$ {totalPendingOverall.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>.</p>
+              </div>
             </div>
-          </motion.div>
-        )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-amber-200 text-amber-800 hover:bg-amber-100 bg-white font-bold text-xs shrink-0 cursor-pointer rounded-xl h-9"
+              onClick={() => {
+                setActiveTab('ranking');
+                setRankingSort('paymentScore');
+              }}
+            >
+              Ver no Ranking de Pacientes
+            </Button>
+          </div>
+        );
+      })()}
 
-        {activeTab === 'graficos' && (
+      <AnimatePresence mode="wait">
+        {activeTab === 'painel' && (
           <motion.div
-            key="graficos-tab"
+            key="painel-tab"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2 }}
             className="space-y-8"
           >
-            {/* Top widgets from Relatorios page */}
+            {/* Monthly dynamic cards row */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <Card className="p-6 bg-white border-slate-200 rounded-[2rem] shadow-sm relative overflow-hidden group select-none">
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <TrendingUp className="w-16 h-16 text-indigo-600" />
+                <div className="absolute top-0 right-0 p-6 text-green-100 group-hover:text-green-50 transition-colors">
+                  <TrendingUp className="w-20 h-20" />
                 </div>
-                <p className="text-[10px] font-black text-slate-400 tracking-widest italic mb-2 uppercase">Faturamento Bruto</p>
-                <p className="text-2xl font-black text-slate-900 italic font-mono">
-                  R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </p>
-                <div className="flex items-center gap-1 mt-2 text-green-600 text-xs font-bold italic">
-                  <ArrowUpRight className="w-3 h-3 text-green-500" />
-                  {totalRevenue > 0 ? '+12.4%' : '+0.0%'} vs mês ant.
-                </div>
-              </Card>
-
-              <Card className="p-6 bg-white border-slate-200 rounded-[2rem] shadow-sm relative overflow-hidden group select-none">
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <Users className="w-16 h-16 text-emerald-600" />
-                </div>
-                <p className="text-[10px] font-black text-slate-400 tracking-widest italic mb-2 uppercase">Novos Pacientes</p>
-                <p className="text-2xl font-black text-slate-900 italic font-mono">{patients.length}</p>
-                <div className="flex items-center gap-1 mt-2 text-green-600 text-xs font-bold italic">
-                  <ArrowUpRight className="w-3 h-3 text-green-500" />
-                  {patients.length > 0 ? '+8.1%' : '+0.0%'} vs mês ant.
+                <div className="relative">
+                  <p className="text-[10px] font-black tracking-widest text-slate-400 mb-1 italic uppercase">Receitas ({selectedMonth === 'todos' ? 'total' : 'período'})</p>
+                  <h3 className="text-3xl font-black text-slate-900 font-mono italic">
+                    R$ {stats.income.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </h3>
+                  <div className="flex items-center gap-1 text-green-600 mt-2 text-[10px] font-bold italic">
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                    recebimentos confirmados
+                  </div>
                 </div>
               </Card>
 
               <Card className="p-6 bg-white border-slate-200 rounded-[2rem] shadow-sm relative overflow-hidden group select-none">
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <Zap className="w-16 h-16 text-amber-600" />
+                <div className="absolute top-0 right-0 p-6 text-red-100 group-hover:text-red-50 transition-colors">
+                  <TrendingDown className="w-20 h-20" />
                 </div>
-                <p className="text-[10px] font-black text-slate-400 tracking-widest italic mb-2 uppercase">Conversão de Orçamentos</p>
-                <p className="text-2xl font-black text-slate-900 italic font-mono">{conversion}%</p>
-                <div className="flex items-center gap-1 mt-2 text-green-600 text-xs font-bold italic">
-                  <ArrowUpRight className="w-3 h-3" />
-                  {conversion > 0 ? 'Meta Stark atingida' : 'Nenhum orçamento'}
+                <div className="relative">
+                  <p className="text-[10px] font-black tracking-widest text-slate-400 mb-1 italic uppercase">Despesas ({selectedMonth === 'todos' ? 'total' : 'período'})</p>
+                  <h3 className="text-3xl font-black text-slate-900 font-mono italic">
+                    R$ {stats.expenses.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </h3>
+                  <div className="flex items-center gap-1 text-red-650 mt-2 text-[10px] font-bold italic">
+                    <ArrowDownRight className="w-3.5 h-3.5" />
+                    saídas do caixa
+                  </div>
                 </div>
               </Card>
 
-              <Card className="p-6 bg-indigo-600 rounded-[2rem] shadow-xl text-white select-none">
-                <p className="text-[10px] font-black opacity-75 tracking-widest italic mb-2 uppercase">LTV Médio (Ciclo Clínico)</p>
-                <p className="text-2xl font-black italic font-mono">R$ {ltv.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                <div className="mt-3 bg-white/10 p-2 rounded-xl text-[9px] font-bold italic lowercase">
-                  {ltv > 0 ? 'top 5% recorrentes geram 40% receita' : 'sem dados de recebimento'}
+              <Card className="p-6 bg-indigo-600 rounded-[2rem] shadow-xl relative overflow-hidden group select-none text-white">
+                <div className="absolute top-0 right-0 p-6 text-white/5 transition-colors">
+                  <DollarSign className="w-20 h-20" />
+                </div>
+                <div className="relative">
+                  <p className="text-[10px] font-black tracking-widest opacity-60 mb-1 italic uppercase">Saldo Líquido</p>
+                  <h3 className="text-3xl font-black font-mono italic">
+                    R$ {stats.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </h3>
+                  <div className="flex items-center gap-1 mt-2 text-[10px] font-bold opacity-80 italic">
+                    receitas menos despesas
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="p-6 bg-amber-500 rounded-[2rem] shadow-xl relative overflow-hidden group select-none text-white">
+                <div className="absolute top-0 right-0 p-6 text-white/5 transition-colors">
+                  <Clock className="w-20 h-20" />
+                </div>
+                <div className="relative">
+                  <p className="text-[10px] font-black tracking-widest opacity-60 mb-1 italic uppercase">A receber (pendentes)</p>
+                  <h3 className="text-3xl font-black font-mono italic">
+                    R$ {stats.pendingIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </h3>
+                  <div className="flex items-center gap-1 mt-2 text-[10px] font-bold opacity-85 italic">
+                    <AlertTriangle className="w-3.5 h-3.5 animate-pulse" />
+                    débitos em aberto
+                  </div>
                 </div>
               </Card>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Billing Curve area chart */}
-              <Card className="lg:col-span-2 p-8 bg-white border-slate-200 rounded-[2.5rem] shadow-sm">
-                <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
-                  <div>
-                    <h3 className="font-black text-slate-900 text-lg italic flex items-center gap-2">
-                      <Activity className="w-5 h-5 text-indigo-500" />
-                      Curva Dinâmica de Faturamento (R$)
-                    </h3>
-                    <p className="text-slate-400 text-[11px] font-bold lowercase">evolução diária de transações confirmadas.</p>
-                  </div>
-                  <Badge className="bg-indigo-50 text-indigo-600 border-none font-black italic px-3 uppercase text-[9px]">Sincronizado</Badge>
-                </div>
-                
-                <div className="h-[300px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={revenueData}>
-                      <defs>
-                        <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.12}/>
-                          <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis 
-                        dataKey="day" 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} 
-                      />
-                      <YAxis 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }}
-                        tickFormatter={(value) => `R$ ${value}`} 
-                      />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#fff', borderRadius: '16px', border: '1px solid #f1f5f9', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                        itemStyle={{ fontWeight: 800, color: '#4f46e5' }}
-                        formatter={(value) => [`R$ ${value}`, 'Faturamento']}
-                      />
-                      <Area type="monotone" dataKey="value" stroke="#4f46e5" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </Card>
-
-              {/* Billing per Service bar representation */}
-              <Card className="p-8 bg-white border-slate-200 rounded-[2.5rem] shadow-sm flex flex-col justify-between">
-                <div>
-                  <h3 className="font-black text-slate-900 text-lg italic mb-2">
-                    Faturamento por Serviço
-                  </h3>
-                  <p className="text-slate-400 text-[11px] font-bold lowercase mb-8">distribuição de receita bruta por procedimento.</p>
-                  
-                  <div className="space-y-6">
-                    {servicesData.map((item, i) => (
-                      <div key={i} className="space-y-2">
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="font-black text-slate-700 italic capitalize">{item.name}</span>
-                          <span className="font-mono text-slate-900 font-extrabold">R$ {item.revenue.toLocaleString('pt-BR')}</span>
-                        </div>
-                        <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                          <motion.div 
-                            initial={{ width: 0 }}
-                            animate={{ width: `${(item.revenue / 45000) * 100}%` }}
-                            transition={{ duration: 0.8, ease: "easeOut" }}
-                            className={cn(
-                              "h-full rounded-full",
-                              i === 0 ? "bg-indigo-600" : i === 1 ? "bg-emerald-500" : i === 2 ? "bg-amber-500" : "bg-slate-400"
-                            )}
-                          />
-                        </div>
-                      </div>
+            {/* Split layout: Left is cash flow, Right is charts and dynamic stats */}
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
+              {/* Left Column: Transaction List */}
+              <div className="lg:col-span-3 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  {/* Category tabs */}
+                  <div className="flex gap-1.5 bg-slate-100 p-1 rounded-xl">
+                    {(['tudo', 'receita', 'despesa'] as const).map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => setFilter(type)}
+                        className={cn(
+                          "px-3.5 py-1.5 rounded-lg text-[10px] font-black italic transition-all capitalize cursor-pointer",
+                          filter === type 
+                            ? "bg-white text-slate-900 shadow-sm" 
+                            : "text-slate-500 hover:text-slate-800"
+                        )}
+                      >
+                        {type}
+                      </button>
                     ))}
                   </div>
+
+                  {/* Search box */}
+                  <div className="relative flex-1 max-w-xs group">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                    <Input 
+                      placeholder="Buscar por paciente, categoria..."
+                      className="pl-9 h-9 text-xs bg-white border-slate-200 rounded-xl"
+                      value={searchTerm}
+                      onChange={e => setSearchTerm(e.target.value)}
+                    />
+                  </div>
                 </div>
 
-                <div className="pt-6 border-t border-slate-100 mt-6 md:mt-0">
-                  <Button 
-                    onClick={() => toast.success('Análise de roi de marketing cruzada com serviços!')}
-                    variant="ghost" 
-                    className="w-full bg-slate-50 text-slate-600 hover:bg-slate-900 hover:text-white rounded-2xl h-12 font-black italic tracking-widest text-[11px] transition-all lowercase"
-                  >
-                    gerar análise de ROI com IA
-                  </Button>
-                </div>
-              </Card>
+                <Card className="bg-white border-slate-200 rounded-[2.5rem] shadow-sm overflow-hidden border-b-8 border-b-indigo-650">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-100 bg-slate-50/50">
+                          <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest lowercase">status</th>
+                          <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest lowercase">descrição</th>
+                          <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest lowercase">vínculo</th>
+                          <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest lowercase">data</th>
+                          <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest lowercase">categoria / metodo</th>
+                          <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest text-right lowercase">valor</th>
+                          <th className="p-4 font-black text-[10px] text-slate-400 tracking-widest text-center lowercase">ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredFinance.map((f) => {
+                          const patient = patients.find(p => p.id === f.patientId);
+                          
+                          return (
+                            <tr 
+                              key={f.id} 
+                              onClick={() => {
+                                setSelectedTransactionId(f.id);
+                                setIsModalOpen(true);
+                              }}
+                              className="border-b border-slate-50 hover:bg-indigo-50/20 transition-colors group cursor-pointer"
+                            >
+                              <td className="p-4">
+                                <Badge className={cn(
+                                  "text-[9px] font-black italic px-2 border-none capitalize",
+                                  f.status.toLowerCase() === 'pago' ? "bg-green-105 text-green-700" : "bg-amber-105 text-amber-700 shadow-sm"
+                                )}>
+                                  {f.status}
+                                </Badge>
+                              </td>
+                              <td className="p-4">
+                                <div className="max-w-[200px]">
+                                  <p className="text-xs font-black text-slate-800 italic line-clamp-1 lowercase">{f.description || 'Lançamento sem descrição'}</p>
+                                  {f.paymentMethod === 'múltiplo' && f.paymentSplits && (
+                                    <span className="text-[9px] text-indigo-500 font-extrabold italic lowercase">múltiplas formas: {f.paymentSplits.length} divisões</span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="p-4">
+                                <span className="font-extrabold text-slate-800 text-xs capitalize italic">
+                                  {patient ? patient.name.split(' ')[0] : 'geral'}
+                                </span>
+                              </td>
+                              <td className="p-4">
+                                <div className="flex flex-col text-[10px] font-bold text-slate-500 font-mono">
+                                  <span>{format(new Date(((f.status === 'pago' && f.paymentDate) ? f.paymentDate : f.dueDate) + 'T12:00:00'), 'dd/MM/yyyy')}</span>
+                                  <span className="text-[9px] text-slate-400 italic">{(f.status === 'pago' && f.paymentDate) ? 'pagamento' : 'vencimento'}</span>
+                                </div>
+                              </td>
+                              <td className="p-4">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-[9px] font-extrabold text-slate-500 uppercase">{f.category || 'Geral'}</span>
+                                  <span className="text-[8px] font-bold text-slate-450 italic lowercase">{f.paymentMethod || 'não inf.'}</span>
+                                </div>
+                              </td>
+                              <td className="p-4 text-right">
+                                <span className={cn(
+                                  "font-mono font-black italic text-sm",
+                                  f.type.toLowerCase() === 'receita' ? "text-green-600" : "text-red-600"
+                                )}>
+                                  {f.type.toLowerCase() === 'receita' ? '+' : '-'} R$ {f.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </span>
+                              </td>
+                              <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex justify-center items-center gap-1">
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon" 
+                                    className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50 cursor-pointer rounded-xl transition-all"
+                                    onClick={() => {
+                                      if (confirm('Deseja realmente excluir este lançamento?')) {
+                                        removeFinance(f.id);
+                                        toast.error('Lançamento excluído.');
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </Button>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 cursor-pointer">
+                                        <MoreVertical className="w-4 h-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="font-sans text-xs">
+                                      <DropdownMenuItem 
+                                        className="flex gap-2 italic font-bold cursor-pointer"
+                                        onClick={() => {
+                                          updateFinance(f.id, { status: 'pago', paymentDate: format(new Date(), 'yyyy-MM-dd') });
+                                          toast.success('Lançamento registrado como pago!');
+                                        }}
+                                        disabled={f.status === 'pago'}
+                                      >
+                                        <CheckCircle2 className="w-4 h-4 text-green-600" /> Marcar como pago
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem 
+                                        className="flex gap-2 italic font-bold cursor-pointer"
+                                        onClick={() => {
+                                          setSelectedTransactionId(f.id);
+                                          setIsModalOpen(true);
+                                        }}
+                                      >
+                                        <Pencil className="w-4 h-4" /> Editar lançamento
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+
+                        {filteredFinance.length === 0 && (
+                          <tr>
+                            <td colSpan={7} className="p-12 text-center text-slate-400 font-bold italic text-xs">
+                              Nenhum lançamento financeiro registrado para o período ou critérios selecionados.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              </div>
+
+              {/* Right Column: Graphs & Top Patients widgets */}
+              <div className="lg:col-span-2 space-y-8">
+                {/* Billing Curve area chart */}
+                <Card className="p-6 bg-white border-slate-200 rounded-[2.5rem] shadow-sm">
+                  <div className="mb-4">
+                    <h3 className="font-black text-slate-900 text-sm italic flex items-center gap-1.5 lowercase">
+                      <Activity className="w-4 h-4 text-indigo-550" />
+                      curva dinâmica de faturamento
+                    </h3>
+                    <p className="text-slate-400 text-[10px] font-bold lowercase">receitas confirmadas {selectedMonth === 'todos' ? 'mensal' : 'diário'}.</p>
+                  </div>
+                  
+                  <div className="h-[220px] w-full mt-2">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={revenueData}>
+                        <defs>
+                          <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.12}/>
+                            <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey="name" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{ fontSize: 9, fontWeight: 700, fill: '#64748b' }} 
+                        />
+                        <YAxis 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{ fontSize: 9, fontWeight: 700, fill: '#64748b' }}
+                          tickFormatter={(value) => `R$ ${value}`} 
+                        />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#fff', borderRadius: '16px', border: '1px solid #f1f5f9', fontSize: '10px' }}
+                          itemStyle={{ fontWeight: 800, color: '#4f46e5' }}
+                          formatter={(value) => [`R$ ${value}`, 'Receitas']}
+                        />
+                        <Area type="monotone" dataKey="Faturamento" stroke="#4f46e5" strokeWidth={2.5} fillOpacity={1} fill="url(#colorValue)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                {/* Billing per Service category representation */}
+                <Card className="p-6 bg-white border-slate-200 rounded-[2.5rem] shadow-sm">
+                  <h3 className="font-black text-slate-900 text-sm italic mb-1.5 lowercase">Faturamento por Categoria</h3>
+                  <p className="text-slate-400 text-[10px] font-bold lowercase mb-5">proporção de receita líquida quitada.</p>
+                  
+                  <div className="space-y-4 max-h-[220px] overflow-y-auto pr-1">
+                    {servicesData.map((item, i) => {
+                      const maxRevenue = servicesData.length > 0 ? Math.max(...servicesData.map(s => s.revenue)) : 1;
+                      const percent = Math.min(100, Math.round((item.revenue / maxRevenue) * 100));
+                      
+                      return (
+                        <div key={i} className="space-y-1.5">
+                          <div className="flex justify-between items-center text-[10px] font-bold">
+                            <span className="font-black text-slate-700 italic capitalize">{item.name}</span>
+                            <span className="font-mono text-slate-950 font-black">R$ {item.revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                          <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div 
+                              className={cn(
+                                "h-full rounded-full transition-all duration-500",
+                                i === 0 ? "bg-indigo-650" : i === 1 ? "bg-emerald-500" : i === 2 ? "bg-amber-500" : "bg-slate-400"
+                              )}
+                              style={{ width: `${percent}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {servicesData.length === 0 && (
+                      <p className="text-center text-slate-400 italic text-[10px] font-bold py-6">sem receitas no período selecionado</p>
+                    )}
+                  </div>
+                </Card>
+
+                {/* Top 5 Patients list */}
+                <Card className="p-6 bg-white border-slate-200 rounded-[2.5rem] shadow-sm">
+                  <h3 className="font-black text-slate-900 text-sm italic mb-1.5 lowercase flex items-center gap-1">
+                    <Crown className="w-4 h-4 text-amber-500" />
+                    Top Pacientes do Período
+                  </h3>
+                  <p className="text-slate-400 text-[10px] font-bold lowercase mb-4">maiores geradores de faturamento.</p>
+
+                  <div className="space-y-3">
+                    {patientRankings.slice(0, 5).map((p, idx) => (
+                      <div key={p.id} className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-xl transition-all">
+                        <div className="flex items-center gap-2">
+                          <span className={cn(
+                            "w-5 h-5 rounded-full font-mono text-[9px] font-black italic flex items-center justify-center border",
+                            idx === 0 ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-slate-50 border-slate-200 text-slate-655"
+                          )}>
+                            {idx + 1}
+                          </span>
+                          <span className="text-xs font-black text-slate-800 italic capitalize">{p.name.split(' ').slice(0, 2).join(' ')}</span>
+                        </div>
+                        <span className="font-mono text-xs font-black text-slate-900">R$ {p.totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    ))}
+
+                    {patientRankings.length === 0 && (
+                      <p className="text-center text-slate-400 italic text-[10px] font-bold py-4">sem dados do faturamento</p>
+                    )}
+                  </div>
+                </Card>
+              </div>
             </div>
           </motion.div>
         )}
@@ -716,9 +849,9 @@ export function Financeiro() {
             className="space-y-8"
           >
             {/* Filters panel */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50/50 p-4 rounded-[2rem] border border-slate-100/50">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50/50 p-4 rounded-[2rem] border border-slate-100/50 font-sans text-xs">
+              <div className="relative flex-1 max-w-md group">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
                 <input
                   type="text"
                   placeholder="Pesquisar por nome, CPF ou WhatsApp..."
@@ -727,25 +860,39 @@ export function Financeiro() {
                   className="w-full h-11 pl-11 pr-4 bg-white border border-slate-200/60 rounded-xl font-bold text-slate-900 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none focus:border-transparent transition-all"
                 />
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Filtrar Categoria:</span>
-                <select
-                  value={rankingTierFilter}
-                  onChange={e => setRankingTierFilter(e.target.value as any)}
-                  className="h-11 px-4 bg-white border border-slate-200/60 rounded-xl font-bold text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                >
-                  <option value="todos">💎 Todas as categorias</option>
-                  <option value="Diamante">👑 Diamante (VIP &gt; R$ 10k)</option>
-                  <option value="Platina">✨ Platina (VIP &gt; R$ 5k)</option>
-                  <option value="Ouro">🥇 Ouro (VIP &gt; R$ 2k)</option>
-                  <option value="Prata">🥈 Prata (Regular &gt; R$ 800)</option>
-                  <option value="Bronze">🥉 Bronze (Início prático)</option>
-                </select>
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Filtrar Categoria:</span>
+                  <select
+                    value={rankingTierFilter}
+                    onChange={e => setRankingTierFilter(e.target.value as any)}
+                    className="h-11 px-4 bg-white border border-slate-200/60 rounded-xl font-bold text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    <option value="todos">💎 Todas as categorias</option>
+                    <option value="Diamante">👑 Diamante (VIP &gt; R$ 10k)</option>
+                    <option value="Platina">✨ Platina (VIP &gt; R$ 5k)</option>
+                    <option value="Ouro">🥇 Ouro (VIP &gt; R$ 2k)</option>
+                    <option value="Prata">🥈 Prata (Regular &gt; R$ 800)</option>
+                    <option value="Bronze">🥉 Bronze (Início prático)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ordenar por:</span>
+                  <select
+                    value={rankingSort}
+                    onChange={e => setRankingSort(e.target.value as any)}
+                    className="h-11 px-4 bg-white border border-slate-200/60 rounded-xl font-bold text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    <option value="totalPaid">💰 Total Investido</option>
+                    <option value="paymentScore">🎯 Score de Pagamento (Devedores)</option>
+                  </select>
+                </div>
               </div>
             </div>
 
             {/* Ranking listings */}
-            <div className="bg-white border border-slate-100 rounded-[2.5rem] shadow-sm overflow-hidden">
+            <div className="bg-white border border-slate-100 rounded-[2.5rem] shadow-sm overflow-hidden border-b-8 border-b-indigo-650">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -754,6 +901,7 @@ export function Financeiro() {
                       <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Paciente</th>
                       <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Fidelidade</th>
                       <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Visitas</th>
+                      <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Saúde Fin. (Score)</th>
                       <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Pendente</th>
                       <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right pr-8">Total Investido</th>
                     </tr>
@@ -761,7 +909,7 @@ export function Financeiro() {
                   <tbody>
                     {patientRankings.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-12 text-center text-slate-400 font-medium italic">
+                        <td colSpan={7} className="p-12 text-center text-slate-400 font-bold italic text-sm">
                           Nenhum paciente encontrado com investidos nesta categoria.
                         </td>
                       </tr>
@@ -786,7 +934,7 @@ export function Financeiro() {
                               ) : idx === 2 ? (
                                 <div className="relative">
                                   <Crown className="w-4 h-4 text-orange-400 fill-orange-200 absolute -top-2 left-1/2 -translate-x-1/2" />
-                                  <span className="w-8 h-8 rounded-full bg-orange-50/50 text-orange-850 font-mono font-black italic flex items-center justify-center text-sm border border-orange-200/50 mt-1">3º</span>
+                                  <span className="w-8 h-8 rounded-full bg-orange-50/50 text-orange-855 font-mono font-black italic flex items-center justify-center text-sm border border-orange-200/50 mt-1">3º</span>
                                 </div>
                               ) : (
                                 <span className="w-7 h-7 rounded-lg bg-slate-100 text-slate-500 font-mono font-bold text-xs flex items-center justify-center">{idx + 1}º</span>
@@ -795,7 +943,7 @@ export function Financeiro() {
                           </td>
                           <td className="p-5">
                             <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-605 relative overflow-hidden group shrink-0 border border-slate-100 shadow-inner">
+                              <div className="w-11 h-11 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-650 relative overflow-hidden group shrink-0 border border-slate-100 shadow-inner font-extrabold capitalize">
                                 {p.profilePicture ? (
                                   <img 
                                     src={p.profilePicture} 
@@ -804,44 +952,56 @@ export function Financeiro() {
                                     referrerPolicy="no-referrer"
                                   />
                                 ) : (
-                                  <span className="text-xs font-black italic">{p.name.split(' ').map(n => n[0]).slice(0, 2).join('')}</span>
+                                  <span>{p.name.charAt(0)}</span>
                                 )}
                               </div>
                               <div>
                                 <h4 className="font-extrabold text-slate-800 text-sm leading-none flex items-center gap-2">
                                   {p.name}
-                                  {p.totalPaid >= 5000 && <Sparkles className="w-3.5 h-3.5 text-indigo-500" />}
                                 </h4>
-                                <p className="text-[10px] text-slate-400 font-bold tracking-tight mt-1 capitalize">
-                                  {p.phone || 'Sem telefone'} • {p.email || 'Sem e-mail'}
-                                </p>
+                                <p className="text-[10px] text-slate-405 mt-1 font-bold">{p.phone}</p>
                               </div>
                             </div>
                           </td>
                           <td className="p-5 text-center">
-                            <span className={cn("px-3 py-1 rounded-full text-[9px] uppercase font-black italic tracking-wider", p.badgeColor)}>
+                            <Badge className={cn("text-[9px] px-2 py-0.5 rounded-lg capitalize", p.badgeColor)}>
                               {p.tier}
-                            </span>
+                            </Badge>
                           </td>
                           <td className="p-5 text-center">
-                            <span className="font-bold text-slate-700 text-sm italic">
-                              {p.appointmentsCount} <span className="text-slate-400 text-[10px] font-normal not-italic">visitas</span>
+                            <span className="font-mono text-slate-700 font-black italic text-sm">{p.appointmentsCount.toString().padStart(2, '0')}</span>
+                          </td>
+                          <td className="p-5 text-center">
+                            <div className="flex flex-col items-center gap-1">
+                              <span className={cn(
+                                "font-mono font-black text-sm",
+                                p.paymentScore >= 80 ? "text-green-600" : p.paymentScore >= 50 ? "text-amber-500" : "text-red-500"
+                              )}>
+                                {p.paymentScore}
+                              </span>
+                              <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div 
+                                  className={cn(
+                                    "h-full rounded-full",
+                                    p.paymentScore >= 80 ? "bg-green-500" : p.paymentScore >= 50 ? "bg-amber-500" : "bg-red-500"
+                                  )}
+                                  style={{ width: `${p.paymentScore}%` }}
+                                />
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-5 text-right">
+                            <span className={cn(
+                              "font-mono font-bold text-xs",
+                              p.totalPending > 0 ? "text-amber-600 font-black" : "text-slate-400"
+                            )}>
+                              {p.totalPending > 0 ? `R$ ${p.totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'R$ 0,00'}
                             </span>
                           </td>
-                          <td className="p-5 text-right font-mono font-bold text-xs text-amber-600">
-                            {p.totalPending > 0 ? `R$ ${p.totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}
-                          </td>
                           <td className="p-5 text-right pr-8">
-                            <div className="flex flex-col items-end">
-                              <span className="font-mono font-black italic text-base text-slate-800">
-                                R$ {p.totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                              </span>
-                              {p.totalPaid > 0 && (
-                                <span className="text-[9px] text-slate-400 font-bold italic tracking-tight uppercase">
-                                  LTV Stark Ativo
-                                </span>
-                              )}
-                            </div>
+                            <span className="font-mono font-black italic text-sm text-slate-900">
+                              R$ {p.totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
                           </td>
                         </tr>
                       ))
@@ -850,42 +1010,17 @@ export function Financeiro() {
                 </table>
               </div>
             </div>
-
-            {/* Categorization rules explanation banner */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 bg-indigo-50/50 rounded-[2rem] p-6 border border-indigo-100/50">
-              <div className="md:col-span-2 space-y-2">
-                <span className="px-2 py-0.5 bg-indigo-100 text-indigo-750 text-[9px] font-black uppercase rounded-lg italic">Marketing de Fidelidade</span>
-                <h4 className="font-black italic text-indigo-950 text-base lowercase">políticas de classificação de faturamento</h4>
-                <p className="text-slate-500 text-[11px] leading-relaxed">
-                  Classificamos automaticamente os pacientes de acordo com os procedimentos finalizados e pagos. Crie estratégias de fidelidade, brindes e atendimento preferencial para as categorias VIP.
-                </p>
-              </div>
-              <div className="md:col-span-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <div className="bg-white p-3 rounded-2xl border border-slate-100 flex flex-col justify-between">
-                  <span className="text-[9px] font-black text-cyan-600 uppercase">👑 Diamante</span>
-                  <p className="text-xs font-bold text-slate-800 mt-1">Investido &gt; R$ 10.000</p>
-                  <p className="text-[9px] text-slate-450 mt-1">Atendimento ultra ultra VIP, condições especiais.</p>
-                </div>
-                <div className="bg-white p-3 rounded-2xl border border-slate-100 flex flex-col justify-between">
-                  <span className="text-[9px] font-black text-slate-500 uppercase">✨ Platina</span>
-                  <p className="text-xs font-bold text-slate-800 mt-1">Investido &gt; R$ 5.000</p>
-                  <p className="text-[9px] text-slate-450 mt-1">Prioridade na agenda, mimos especiais.</p>
-                </div>
-                <div className="bg-white p-3 rounded-2xl border border-slate-100 flex flex-col justify-between">
-                  <span className="text-[9px] font-black text-amber-600 uppercase">🥇 Ouro</span>
-                  <p className="text-xs font-bold text-slate-800 mt-1">Investido &gt; R$ 2.000</p>
-                  <p className="text-[9px] text-slate-450 mt-1">Upgrade em avaliações estéticas cortesia.</p>
-                </div>
-              </div>
-            </div>
           </motion.div>
         )}
       </AnimatePresence>
 
       <FinanceModal 
-        open={isModalOpen} 
-        onOpenChange={setIsModalOpen}
-        transactionId={selectedTransactionId}
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setSelectedTransactionId(null);
+        }}
+        transactionId={selectedTransactionId || undefined}
       />
     </motion.div>
   );

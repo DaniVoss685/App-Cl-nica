@@ -799,6 +799,104 @@ export function Dashboard() {
         </Card>
       </div>
 
+      {/* Seção de Pacientes com Débitos / Pendências Financeiras */}
+      {(() => {
+        // Encontrar pacientes que possuem transações pendentes no financeiro
+        const patientsWithDebts = patients.map(p => {
+          const pendingTxs = finance.filter(f => f.patientId === p.id && f.type === 'receita' && f.status === 'pendente');
+          const totalPending = pendingTxs.reduce((sum, f) => sum + f.amount, 0);
+          
+          // Encontrar transações vencidas (dueDate < hoje)
+          const overdueTxs = pendingTxs.filter(f => {
+            const [year, month, day] = f.dueDate.split('-');
+            const due = new Date(Number(year), Number(month) - 1, Number(day));
+            return due < new Date();
+          });
+          const overdueAmount = overdueTxs.reduce((sum, f) => sum + f.amount, 0);
+          
+          return {
+            ...p,
+            totalPending,
+            overdueAmount,
+            hasOverdue: overdueTxs.length > 0
+          };
+        }).filter(p => p.totalPending > 0);
+
+        if (patientsWithDebts.length === 0) return null;
+
+        return (
+          <Card className="border-amber-100 bg-amber-50/10 rounded-[2rem] overflow-hidden shadow-sm">
+            <CardHeader className="pb-2 border-b border-amber-100/50 bg-amber-50/30 flex flex-row items-center justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-amber-600 animate-pulse" />
+                  <CardTitle className="text-base font-bold text-slate-800">Controle de Pacientes com Débitos / Pendências</CardTitle>
+                </div>
+                <p className="text-xs text-slate-500">Pacientes que possuem consultas com pagamentos pendentes ou atrasados no financeiro.</p>
+              </div>
+              <Badge className="bg-amber-100 text-amber-800 border-none font-black italic">
+                {patientsWithDebts.length} {patientsWithDebts.length === 1 ? 'Paciente' : 'Pacientes'}
+              </Badge>
+            </CardHeader>
+            <CardContent className="p-4 max-h-[300px] overflow-y-auto">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {patientsWithDebts.map(p => (
+                  <div key={p.id} className="bg-white p-4 rounded-2xl border border-slate-150 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+                    <div>
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-xs font-black text-slate-850 truncate block max-w-[150px]">{p.name}</span>
+                        {p.hasOverdue ? (
+                          <Badge className="bg-red-50 text-red-705 border border-red-210 text-[8px] font-black uppercase animate-shake">Atrasado</Badge>
+                        ) : (
+                          <Badge className="bg-amber-50 text-amber-705 border border-amber-210 text-[8px] font-black uppercase">Pendente</Badge>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 font-bold tracking-tight mb-2">
+                        {p.phone || 'Sem celular'}
+                      </p>
+                      <div className="space-y-1 border-t border-slate-50 pt-2 font-mono text-[11px] font-bold">
+                        <div className="flex justify-between text-slate-650">
+                          <span>Total Pendente:</span>
+                          <span className="text-amber-700">R$ {p.totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        {p.overdueAmount > 0 && (
+                          <div className="flex justify-between text-red-650 font-black">
+                            <span>Valor em Atraso:</span>
+                            <span className="text-red-600">R$ {p.overdueAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-4 pt-2 border-t border-slate-50">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 text-[10px] h-8 border-indigo-100 text-indigo-750 hover:bg-indigo-50 font-bold italic"
+                        onClick={() => {
+                          const wppUrl = `https://wa.me/${p.phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Olá, ${p.name.split(' ')[0]}! Tudo bem? Passando para lembrar da pendência em aberto na clínica no valor de R$ ${p.totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}. Qualquer dúvida estamos à disposição.`)}`;
+                          window.open(wppUrl, '_blank');
+                        }}
+                      >
+                        Cobrar WhatsApp
+                      </Button>
+                      <Link to="/financeiro" className="flex-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="w-full text-[10px] h-8 text-slate-500 hover:bg-slate-50 font-bold"
+                        >
+                          Ver Financeiro
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
+
       {/* Clinical Studies Section */}
       {appointments.some(a => a.isCaseStudy) && (
         <Card className="border-purple-100 bg-purple-50/20">

@@ -8,8 +8,8 @@ import {
   CheckCheck, Phone, Video, Globe, Sparkles, Link as LinkIcon,
   Wifi, WifiOff, QrCode, Settings, RefreshCw, CheckCircle2, AlertCircle,
   Key, Server, Loader2, Eye, EyeOff, Smartphone, Users, Clock,
-  HeadphonesIcon, ArrowRight, UserCheck, PhoneOff, RotateCcw,
-  MessageCircle, Filter, X,
+  HeadphonesIcon, ArrowRight, ArrowLeft, UserCheck, PhoneOff, RotateCcw,
+  MessageCircle, Filter, X, Mic, Trash2, Pause, UploadCloud, FileText,
 } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
@@ -18,7 +18,7 @@ import type { WaChat, WaMessage } from '../store';
 import { toast } from 'sonner';
 import {
   getConnectionState, fetchChats, fetchMessages, sendTextMessage,
-  sendMediaMessage, fetchContacts, toRemoteJid, formatTime, formatDateLabel,
+  sendMediaMessage, sendWhatsAppAudio, fetchContacts, toRemoteJid, formatTime, formatDateLabel,
 } from '../services/evolutionApi';
 
 type MainTab = 'contatos' | 'fila' | 'atendimento' | 'conexao';
@@ -170,6 +170,88 @@ function ChatWindow({ chat }: { chat: WaChat }) {
   const [inserted, setInserted] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // Estados de Drag & Drop e fila de arquivos pendentes
+  const [pendingFiles, setPendingFiles] = useState<{
+    id: string;
+    file: File;
+    preview: string;
+    mediaType: 'image' | 'audio' | 'video' | 'document';
+  }[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const addFilesToPending = async (filesList: FileList) => {
+    const newPending: typeof pendingFiles = [];
+    for (let i = 0; i < filesList.length; i++) {
+      const file = filesList[i];
+      if (file.size > 15 * 1024 * 1024) {
+        toast.error(`O arquivo ${file.name} é muito grande. Limite de 15MB.`);
+        continue;
+      }
+
+      let mediaType: 'image' | 'audio' | 'video' | 'document' = 'document';
+      let previewUrl = '';
+
+      if (file.type.startsWith('image/')) {
+        mediaType = 'image';
+        previewUrl = URL.createObjectURL(file);
+      } else {
+        if (file.type.startsWith('audio/')) {
+          mediaType = 'audio';
+        } else if (file.type.startsWith('video/')) {
+          mediaType = 'video';
+        }
+        previewUrl = '';
+      }
+
+      newPending.push({
+        id: `file-${Date.now()}-${Math.random()}`,
+        file,
+        preview: previewUrl,
+        mediaType,
+      });
+    }
+
+    if (newPending.length > 0) {
+      setPendingFiles(prev => [...prev, ...newPending]);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await addFilesToPending(e.dataTransfer.files);
+    }
+  };
+
+  const moveFile = (index: number, direction: 'left' | 'right') => {
+    const nextIndex = direction === 'left' ? index - 1 : index + 1;
+    if (nextIndex < 0 || nextIndex >= pendingFiles.length) return;
+
+    const newList = [...pendingFiles];
+    const temp = newList[index];
+    newList[index] = newList[nextIndex];
+    newList[nextIndex] = temp;
+    setPendingFiles(newList);
+  };
+
+  const removePendingFile = (id: string) => {
+    const fileToRemove = pendingFiles.find(f => f.id === id);
+    if (fileToRemove && fileToRemove.preview.startsWith('blob:')) {
+      URL.revokeObjectURL(fileToRemove.preview);
+    }
+    setPendingFiles(prev => prev.filter(f => f.id !== id));
+  };
+
   // Pré-preencher a caixa de digitação se houver texto nos parâmetros de URL
   useEffect(() => {
     const textParam = searchParams.get('text');
@@ -221,33 +303,173 @@ function ChatWindow({ chat }: { chat: WaChat }) {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Emoji Picker & Recording states
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
 
-    if (file.size > 15 * 1024 * 1024) {
-      toast.error('O arquivo é muito grande. Escolha um arquivo de até 15MB.');
-      return;
+  const clinicalEmojis = [
+    '😊', '👍', '🙏', '❤️', '🗓️', '⏰', '🩺', '🦷', '⚕️', '✅', '❌', 
+    '👋', '🎉', '🤔', '😅', '💡', '💬', '📍', '🏥', '🤝', '🌟', '👩‍⚕️', '👨‍⚕️'
+  ];
+
+  // Timer para gravação de áudio
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (isRecording) {
+      interval = setInterval(() => {
+        setRecordingTime(t => t + 1);
+      }, 1000);
+    } else {
+      setRecordingTime(0);
+    }
+    return () => clearInterval(interval);
+  }, [isRecording]);
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+        const localBlobUrl = URL.createObjectURL(audioBlob);
+        
+        // Converte para base64
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = async () => {
+          const base64Pure = (reader.result as string).split(',')[1];
+          await sendRecordedAudio(base64Pure, localBlobUrl, audioBlob.type);
+        };
+        // Para todas as tracks do microfone
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      setMediaRecorder(recorder);
+      recorder.start();
+      setIsRecording(true);
+    } catch (err: any) {
+      toast.error('Não foi possível acessar o microfone. Verifique as permissões.');
+      console.error('Audio recorder error:', err);
+    }
+  };
+
+  const stopRecording = (cancel = false) => {
+    if (mediaRecorder && isRecording) {
+      if (cancel) {
+        mediaRecorder.onstop = () => {
+          mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        };
+      }
+      mediaRecorder.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const sendRecordedAudio = async (base64Pure: string, localBlobUrl: string, mimeType: string) => {
+    setSending(true);
+    let destinationJid = chat.id;
+    if (chat.remoteJidAlt) {
+      destinationJid = chat.remoteJidAlt;
+    } else {
+      const hasLetters = /[a-zA-Z]/.test(chat.id.split('@')[0]);
+      if (hasLetters && patients && patients.length > 0) {
+        const patient = patients.find(p => p.name.toLowerCase().trim() === chat.name.toLowerCase().trim());
+        if (patient && patient.phone) {
+          destinationJid = toRemoteJid(patient.phone);
+        }
+      }
     }
 
-    setSending(true);
+    const optimisticId = `opt-audio-${Date.now()}`;
+    const optimistic: WaMessage = {
+      id: optimisticId,
+      fromMe: true,
+      text: '[Áudio]',
+      timestamp: Math.floor(Date.now() / 1000),
+      status: 'PENDING',
+      mediaType: 'audio',
+      mediaUrl: localBlobUrl,
+      mediaMimeType: mimeType,
+    };
+    addOutboundMessage(chat.id, optimistic);
 
     try {
-      let base64Pure = '';
-      let fileType = file.type;
-      let previewUrl = '';
-      let mediaType: 'image' | 'audio' | 'video' | 'document' = 'document';
+      const sent = await sendWhatsAppAudio(
+        evolutionApiUrl,
+        evolutionApiKey,
+        evolutionInstance,
+        destinationJid,
+        base64Pure
+      );
+      const resolvedMsg = {
+        ...sent,
+        mediaUrl: localBlobUrl,
+        mediaMimeType: mimeType
+      };
+      addOutboundMessage(chat.id, resolvedMsg, optimisticId);
+      // Removido toast.success para áudio conforme pedido do usuário
+    } catch (err: any) {
+      toast.error(`Falha ao enviar áudio: ${err.message}`);
+    } finally {
+      setSending(false);
+    }
+  };
 
-      if (file.type.startsWith('image/')) {
-        mediaType = 'image';
-        try {
-          const compressed = await compressImage(file);
-          base64Pure = compressed.base64;
-          fileType = compressed.type;
-          previewUrl = `data:${compressed.type};base64,${compressed.base64}`;
-        } catch (err) {
-          console.warn('[Image Compress] Fallback to raw image:', err);
-          // Fallback to raw file reading if compression fails
+  const sendPendingFiles = async () => {
+    if (pendingFiles.length === 0) return;
+    setSending(true);
+
+    const filesToSend = [...pendingFiles];
+    setPendingFiles([]); // Limpa a fila na interface imediatamente
+
+    let destinationJid = chat.id;
+    if (chat.remoteJidAlt) {
+      destinationJid = chat.remoteJidAlt;
+    } else {
+      const hasLetters = /[a-zA-Z]/.test(chat.id.split('@')[0]);
+      if (hasLetters && patients && patients.length > 0) {
+        const patient = patients.find(p => p.name.toLowerCase().trim() === chat.name.toLowerCase().trim());
+        if (patient && patient.phone) {
+          destinationJid = toRemoteJid(patient.phone);
+        }
+      }
+    }
+
+    for (const pending of filesToSend) {
+      const file = pending.file;
+      const mediaType = pending.mediaType;
+
+      try {
+        let base64Pure = '';
+        let fileType = file.type;
+        let previewUrl = '';
+
+        if (file.type.startsWith('image/')) {
+          try {
+            const compressed = await compressImage(file);
+            base64Pure = compressed.base64;
+            fileType = compressed.type;
+            previewUrl = `data:${compressed.type};base64,${compressed.base64}`;
+          } catch (err) {
+            console.warn('[Image Compress] Fallback to raw image:', err);
+            const resData: string = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
+              reader.readAsDataURL(file);
+            });
+            base64Pure = resData.split(',')[1];
+            previewUrl = resData;
+          }
+        } else {
           const resData: string = await new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result as string);
@@ -257,28 +479,116 @@ function ChatWindow({ chat }: { chat: WaChat }) {
           base64Pure = resData.split(',')[1];
           previewUrl = resData;
         }
-      } else {
-        if (file.type.startsWith('audio/')) {
-          mediaType = 'audio';
-        } else if (file.type.startsWith('video/')) {
-          mediaType = 'video';
+
+        if (!base64Pure) continue;
+
+        const optimisticId = `opt-media-${Date.now()}-${Math.random()}`;
+        const optimistic: WaMessage = {
+          id: optimisticId,
+          fromMe: true,
+          text: file.name,
+          timestamp: Math.floor(Date.now() / 1000),
+          status: 'PENDING',
+          mediaType,
+          mediaUrl: previewUrl,
+          mediaMimeType: fileType,
+        };
+        addOutboundMessage(chat.id, optimistic);
+
+        try {
+          const sent = await sendMediaMessage(
+            evolutionApiUrl,
+            evolutionApiKey,
+            evolutionInstance,
+            destinationJid,
+            base64Pure,
+            mediaType,
+            fileType,
+            file.name
+          );
+          addOutboundMessage(chat.id, sent, optimisticId);
+          // O usuário explicitamente pediu para não exibir toasts de sucesso no envio de fotos e PDFs
+        } catch (err: any) {
+          toast.error(`Falha ao enviar arquivo ${file.name}: ${err.message}`);
         }
-
-        const resData: string = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
-          reader.readAsDataURL(file);
-        });
-        base64Pure = resData.split(',')[1];
-        previewUrl = resData;
+      } catch (err: any) {
+        toast.error(`Erro ao processar arquivo ${file.name}: ${err.message}`);
       }
+    }
 
-      if (!base64Pure) {
-        setSending(false);
-        return;
-      }
+    setSending(false);
+  };
 
+  const formatRecordTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  const handleEmojiClick = (emoji: string) => {
+    setText(prev => prev + emoji);
+    setShowEmojiPicker(false);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      await addFilesToPending(e.target.files);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const loadMessages = useCallback(async () => {
+    // evolutionInstance é necessário para a URL. Se não estiver na store, não há como prosseguir.
+    if (!evolutionInstance) return;
+
+    const hasMessages = (whatsappMessages[chat.id] || []).length > 0;
+    
+    // Só ativa o spinner de loading inicial se a tela estiver vazia,
+    // permitindo atualizações de polling silenciosas e fluidas em background.
+    if (!hasMessages) {
+      setLoading(true);
+    }
+
+    try {
+      const msgs = await fetchMessages(evolutionApiUrl, evolutionApiKey, evolutionInstance, chat.id, 50);
+      if (msgs.length > 0) upsertWhatsappMessages(chat.id, msgs);
+    } catch (err: any) {
+      console.warn('[ChatWindow] Could not load messages:', err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [chat.id, evolutionApiUrl, evolutionApiKey, evolutionInstance, upsertWhatsappMessages, whatsappMessages]);
+
+  // Initial load
+  useEffect(() => {
+    loadMessages();
+  }, [chat.id]);
+
+  // Polling every 8s for new messages
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadMessages();
+    }, 8000);
+    pollingRef.current = interval;
+    return () => clearInterval(interval);
+  }, [chat.id]);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
+
+  const handleSend = async () => {
+    const trimmed = text.trim();
+    if (!trimmed && pendingFiles.length === 0) return;
+    if (sending) return;
+
+    // Garante status de atendimento imediatamente
+    setChatStatus(chat.id, 'atendimento');
+
+    // 1. Envia a mensagem de texto se houver
+    if (trimmed) {
+      // Traduz JID alfanumérico para número real
       let destinationJid = chat.id;
       if (chat.remoteJidAlt) {
         destinationJid = chat.remoteJidAlt;
@@ -292,117 +602,32 @@ function ChatWindow({ chat }: { chat: WaChat }) {
         }
       }
 
-      const optimisticId = `opt-media-${Date.now()}`;
+      // Optimistic update
+      const optimisticId = `opt-${Date.now()}`;
       const optimistic: WaMessage = {
         id: optimisticId,
         fromMe: true,
-        text: file.name,
+        text: trimmed,
         timestamp: Math.floor(Date.now() / 1000),
         status: 'PENDING',
-        mediaType,
-        mediaUrl: previewUrl,
-        mediaMimeType: fileType,
       };
       addOutboundMessage(chat.id, optimistic);
+      setText('');
+      setSending(true);
 
       try {
-        const sent = await sendMediaMessage(
-          evolutionApiUrl,
-          evolutionApiKey,
-          evolutionInstance,
-          destinationJid,
-          base64Pure,
-          mediaType,
-          fileType,
-          file.name
-        );
+        const sent = await sendTextMessage(evolutionApiUrl, evolutionApiKey, evolutionInstance, destinationJid, trimmed);
         addOutboundMessage(chat.id, sent, optimisticId);
-        toast.success(`${file.name} enviado!`);
       } catch (err: any) {
-        toast.error(`Falha ao enviar arquivo: ${err.message}`);
-      }
-    } catch (err: any) {
-      toast.error(`Erro ao processar arquivo: ${err.message}`);
-    } finally {
-      setSending(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
-  const loadMessages = useCallback(async () => {
-    // evolutionInstance é necessário para a URL. Se não estiver na store, não há como prosseguir.
-    if (!evolutionInstance) return;
-    setLoading(true);
-    try {
-      const msgs = await fetchMessages(evolutionApiUrl, evolutionApiKey, evolutionInstance, chat.id, 50);
-      if (msgs.length > 0) upsertWhatsappMessages(chat.id, msgs);
-    } catch (err: any) {
-      console.warn('[ChatWindow] Could not load messages:', err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [chat.id, evolutionApiUrl, evolutionApiKey, evolutionInstance, upsertWhatsappMessages]);
-
-  // Initial load
-  useEffect(() => {
-    loadMessages();
-  }, [loadMessages]);
-
-  // Polling every 8s for new messages
-  useEffect(() => {
-    pollingRef.current = setInterval(loadMessages, 8000);
-    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
-  }, [loadMessages]);
-
-  // Scroll to bottom on new messages
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
-
-  const handleSend = async () => {
-    const trimmed = text.trim();
-    if (!trimmed || sending) return;
-
-    // Garante status de atendimento imediatamente
-    setChatStatus(chat.id, 'atendimento');
-
-    // Traduz JID alfanumérico para número real
-    let destinationJid = chat.id;
-    if (chat.remoteJidAlt) {
-      destinationJid = chat.remoteJidAlt;
-      console.log(`[ChatWindow] Usando JID alternativo da Evolution API para envio: ${destinationJid}`);
-    } else {
-      const hasLetters = /[a-zA-Z]/.test(chat.id.split('@')[0]);
-      if (hasLetters && patients && patients.length > 0) {
-        const patient = patients.find(p => p.name.toLowerCase().trim() === chat.name.toLowerCase().trim());
-        if (patient && patient.phone) {
-          destinationJid = toRemoteJid(patient.phone);
-          console.log(`[ChatWindow] Traduzido JID alfanumérico ${chat.id} para número real ${destinationJid} para envio.`);
-        }
+        toast.error(`Falha ao enviar mensagem: ${err.message}`);
+      } finally {
+        setSending(false);
       }
     }
 
-    // Optimistic update
-    const optimisticId = `opt-${Date.now()}`;
-    const optimistic: WaMessage = {
-      id: optimisticId,
-      fromMe: true,
-      text: trimmed,
-      timestamp: Math.floor(Date.now() / 1000),
-      status: 'PENDING',
-    };
-    addOutboundMessage(chat.id, optimistic);
-    setText('');
-    setSending(true);
-
-    try {
-      const sent = await sendTextMessage(evolutionApiUrl, evolutionApiKey, evolutionInstance, destinationJid, trimmed);
-      // Replace optimistic with real
-      addOutboundMessage(chat.id, sent, optimisticId);
-    } catch (err: any) {
-      toast.error(`Falha ao enviar mensagem: ${err.message}`);
-    } finally {
-      setSending(false);
+    // 2. Envia os arquivos da fila se houver
+    if (pendingFiles.length > 0) {
+      await sendPendingFiles();
     }
   };
 
@@ -471,8 +696,21 @@ function ChatWindow({ chat }: { chat: WaChat }) {
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
+      {/* Messages (with Drag and Drop support) */}
+      <div 
+        className="flex-grow overflow-y-auto p-4 space-y-4 bg-slate-50/40 relative"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {isDragging && (
+          <div className="absolute inset-0 bg-indigo-600/10 backdrop-blur-[1px] border-2 border-dashed border-indigo-500 rounded-2xl flex flex-col items-center justify-center gap-2 z-[99] pointer-events-none animate-in fade-in duration-100">
+            <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center shadow-md">
+              <UploadCloud className="w-6 h-6 animate-bounce" />
+            </div>
+            <p className="text-sm font-bold text-indigo-700 font-sans">Solte suas Fotos ou PDFs aqui para anexar</p>
+          </div>
+        )}
         {loading && messages.length === 0 && (
           <div className="flex justify-center py-8">
             <Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
@@ -502,22 +740,22 @@ function ChatWindow({ chat }: { chat: WaChat }) {
                     )}
                     
                     {/* Exibição de Imagem */}
-                    {msg.mediaType === 'image' && msg.mediaUrl && (
+                    {(msg.mediaType === 'image' || msg.text === '[Imagem]' || msg.text === '[imagem]' || (msg.text && (msg.text.endsWith('.png') || msg.text.endsWith('.jpg') || msg.text.endsWith('.jpeg')))) && (
                       <div className="mt-1 rounded-lg overflow-hidden border border-slate-100 max-w-[280px]">
                         <img 
-                          src={`/api/whatsapp-media?url=${encodeURIComponent(msg.mediaUrl)}&key=${encodeURIComponent(evolutionApiKey)}&msgId=${msg.id}&jid=${encodeURIComponent(chat.id)}&instance=${encodeURIComponent(evolutionInstance)}`} 
+                          src={msg.mediaUrl && (msg.mediaUrl.startsWith('data:') || msg.mediaUrl.startsWith('blob:')) ? msg.mediaUrl : `/api/whatsapp-media?url=${encodeURIComponent(msg.mediaUrl || 'image')}&key=${encodeURIComponent(evolutionApiKey)}&msgId=${msg.id}&jid=${encodeURIComponent(chat.id)}&instance=${encodeURIComponent(evolutionInstance)}`} 
                           alt="Imagem" 
                           className="w-full h-auto object-cover max-h-60 cursor-pointer" 
-                          onClick={() => window.open(`/api/whatsapp-media?url=${encodeURIComponent(msg.mediaUrl!)}&key=${encodeURIComponent(evolutionApiKey)}&msgId=${msg.id}&jid=${encodeURIComponent(chat.id)}&instance=${encodeURIComponent(evolutionInstance)}`, '_blank')} 
+                          onClick={() => window.open(msg.mediaUrl && (msg.mediaUrl.startsWith('data:') || msg.mediaUrl.startsWith('blob:')) ? msg.mediaUrl : `/api/whatsapp-media?url=${encodeURIComponent(msg.mediaUrl || 'image')}&key=${encodeURIComponent(evolutionApiKey)}&msgId=${msg.id}&jid=${encodeURIComponent(chat.id)}&instance=${encodeURIComponent(evolutionInstance)}`, '_blank')} 
                         />
                       </div>
                     )}
                     
                     {/* Exibição de Áudio */}
-                    {msg.mediaType === 'audio' && msg.mediaUrl && (
+                    {(msg.mediaType === 'audio' || msg.text === '[Áudio]' || msg.text === '[audio]') && (
                       <div className="mt-1 py-1 shrink-0">
                         <audio 
-                          src={`/api/whatsapp-media?url=${encodeURIComponent(msg.mediaUrl)}&key=${encodeURIComponent(evolutionApiKey)}&msgId=${msg.id}&jid=${encodeURIComponent(chat.id)}&instance=${encodeURIComponent(evolutionInstance)}`} 
+                          src={msg.mediaUrl && (msg.mediaUrl.startsWith('data:') || msg.mediaUrl.startsWith('blob:')) ? msg.mediaUrl : `/api/whatsapp-media?url=${encodeURIComponent(msg.mediaUrl || 'audio')}&key=${encodeURIComponent(evolutionApiKey)}&msgId=${msg.id}&jid=${encodeURIComponent(chat.id)}&instance=${encodeURIComponent(evolutionInstance)}`} 
                           controls 
                           className="max-w-full rounded-lg" 
                           style={{ maxHeight: '40px' }} 
@@ -526,29 +764,29 @@ function ChatWindow({ chat }: { chat: WaChat }) {
                     )}
                     
                     {/* Exibição de Documento / PDF */}
-                    {msg.mediaType === 'document' && (
+                    {(msg.mediaType === 'document' || msg.text === '[Documento]' || msg.text === '[documento]' || (msg.text && msg.text.endsWith('.pdf'))) && (
                       <div className="mt-1 flex items-center gap-3 p-3 bg-slate-50/80 rounded-xl border border-slate-100 max-w-[280px] text-slate-800">
                         <div className="w-9 h-9 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center shrink-0">
                           <Paperclip className="w-4 h-4" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-slate-800 truncate">{msg.text || 'Documento'}</p>
-                          {msg.mediaUrl && (
-                            <a
-                              href={`/api/whatsapp-media?url=${encodeURIComponent(msg.mediaUrl)}&key=${encodeURIComponent(evolutionApiKey)}&msgId=${msg.id}&jid=${encodeURIComponent(chat.id)}&instance=${encodeURIComponent(evolutionInstance)}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[10px] text-indigo-600 font-bold hover:underline mt-1 block"
-                            >
-                              Visualizar / Baixar
-                            </a>
-                          )}
+                          <p className="text-xs font-bold text-slate-800 truncate">{msg.text && !msg.text.startsWith('[') ? msg.text : 'Documento'}</p>
+                          <a
+                            href={msg.mediaUrl && (msg.mediaUrl.startsWith('data:') || msg.mediaUrl.startsWith('blob:')) ? msg.mediaUrl : `/api/whatsapp-media?url=${encodeURIComponent(msg.mediaUrl || 'document')}&key=${encodeURIComponent(evolutionApiKey)}&msgId=${msg.id}&jid=${encodeURIComponent(chat.id)}&instance=${encodeURIComponent(evolutionInstance)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-indigo-600 font-bold hover:underline mt-1 block"
+                          >
+                            Visualizar / Baixar
+                          </a>
                         </div>
                       </div>
                     )}
-
-                    {/* Exibição de Texto Livre (apenas se não for áudio/documento ou imagem sem legenda) */}
-                    {msg.mediaType !== 'audio' && msg.mediaType !== 'document' && (msg.mediaType !== 'image' || (msg.text && msg.text !== '[Imagem]')) && (
+                    
+                    {/* Exibição de Texto Livre (apenas se não for mídia tratada acima) */}
+                    {msg.mediaType !== 'audio' && msg.text !== '[Áudio]' && msg.text !== '[audio]' && 
+                     msg.mediaType !== 'document' && msg.text !== '[Documento]' && msg.text !== '[documento]' && (!msg.text || !msg.text.endsWith('.pdf')) &&
+                     msg.mediaType !== 'image' && msg.text !== '[Imagem]' && msg.text !== '[imagem]' && (!msg.text || (!msg.text.endsWith('.png') && !msg.text.endsWith('.jpg') && !msg.text.endsWith('.jpeg'))) && (
                       <p className="text-sm">{msg.text || <span className="italic opacity-60">[mensagem de mídia]</span>}</p>
                     )}
                     
@@ -590,43 +828,169 @@ function ChatWindow({ chat }: { chat: WaChat }) {
         </div>
       </div>
 
+      {/* File Previews Bar */}
+      {pendingFiles.length > 0 && (
+        <div className="px-4 py-3 bg-slate-50/80 border-t border-slate-100 flex flex-wrap gap-3 shrink-0">
+          {pendingFiles.map((pf, idx) => (
+            <div key={pf.id} className="relative w-28 h-28 bg-white border border-slate-200/80 rounded-xl p-2 flex flex-col justify-between shadow-sm group">
+              {pf.mediaType === 'image' ? (
+                <img src={pf.preview} alt="Preview" className="w-full h-16 object-cover rounded-lg" />
+              ) : (
+                <div className="w-full h-16 bg-slate-50 text-slate-400 rounded-lg flex flex-col items-center justify-center gap-1">
+                  <FileText className="w-6 h-6 text-indigo-500" />
+                  <span className="text-[9px] text-slate-500 px-1 truncate w-full text-center font-bold">{pf.file.name}</span>
+                </div>
+              )}
+              
+              {/* Controls (Move left, Move right, Remove) */}
+              <div className="flex items-center justify-between gap-1 mt-1 bg-slate-50/85 px-1 py-0.5 rounded-lg border border-slate-100">
+                <div className="flex gap-0.5">
+                  <button 
+                    type="button"
+                    disabled={idx === 0}
+                    onClick={() => moveFile(idx, 'left')}
+                    className="p-0.5 hover:bg-slate-200/60 rounded text-slate-500 disabled:opacity-30 cursor-pointer"
+                    title="Mover para esquerda"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button 
+                    type="button"
+                    disabled={idx === pendingFiles.length - 1}
+                    onClick={() => moveFile(idx, 'right')}
+                    className="p-0.5 hover:bg-slate-200/60 rounded text-slate-500 disabled:opacity-30 cursor-pointer"
+                    title="Mover para direita"
+                  >
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                
+                <button 
+                  type="button"
+                  onClick={() => removePendingFile(pf.id)}
+                  className="p-0.5 hover:bg-red-50 rounded text-red-500 cursor-pointer"
+                  title="Remover arquivo"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Input */}
-      <div className="p-3 bg-white border-t border-slate-100 flex items-end gap-2 shrink-0">
+      <div className="p-3 bg-white border-t border-slate-100 flex items-end gap-2 shrink-0 relative">
         <input 
           type="file" 
           ref={fileInputRef} 
           className="hidden" 
           onChange={handleFileChange}
           accept="image/*,application/pdf,audio/*,video/*"
+          multiple
         />
-        <Button variant="ghost" size="icon" className="text-slate-400 h-9 w-9 shrink-0"><Smile className="w-5 h-5" /></Button>
-        <Button 
-          onClick={() => fileInputRef.current?.click()} 
-          disabled={sending}
-          variant="ghost" 
-          size="icon" 
-          className="text-slate-400 h-9 w-9 shrink-0"
-        >
-          <Paperclip className="w-5 h-5" />
-        </Button>
-        <div className="flex-1 relative">
-          <textarea
-            rows={1}
-            placeholder="Digite sua mensagem..."
-            value={text}
-            onChange={e => setText(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            className="w-full resize-none border border-slate-200 bg-slate-50 rounded-xl px-4 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:border-indigo-400 focus:bg-white transition-all max-h-32"
-          />
-        </div>
-        <Button
-          onClick={handleSend}
-          disabled={!text.trim() || sending}
-          size="icon"
-          className="h-9 w-9 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md shrink-0 disabled:opacity-50"
-        >
-          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 ml-0.5" />}
-        </Button>
+
+        {/* Emoji Picker Popover */}
+        {showEmojiPicker && (
+          <div className="absolute bottom-16 left-3 bg-white border border-slate-150 p-3 rounded-2xl shadow-2xl flex flex-wrap gap-2 w-64 z-[9999] animate-in fade-in slide-in-from-bottom-2 duration-155">
+            {clinicalEmojis.map(emoji => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => handleEmojiClick(emoji)}
+                className="w-7 h-7 text-lg hover:bg-slate-50 rounded flex items-center justify-center transition-colors cursor-pointer"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {isRecording ? (
+          /* Recording Panel */
+          <div className="flex-grow flex items-center justify-between bg-red-50/70 border border-red-100 px-4 py-2.5 rounded-xl animate-in zoom-in-95 duration-100">
+            <div className="flex items-center gap-3">
+              <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-ping" />
+              <span className="text-xs font-bold text-red-600 italic font-mono uppercase tracking-wider">Gravando Voz: {formatRecordTime(recordingTime)}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button 
+                onClick={() => stopRecording(true)} 
+                variant="ghost" 
+                size="icon" 
+                className="text-red-500 hover:bg-red-100/50 hover:text-red-700 h-8 w-8 rounded-lg"
+                title="Descartar Gravação"
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+              <Button 
+                onClick={() => stopRecording(false)} 
+                className="bg-red-600 hover:bg-red-700 text-white font-bold h-8 px-3 rounded-lg text-[10px] uppercase tracking-wider italic flex items-center gap-1 shadow active:scale-95 transition-all"
+                title="Enviar Áudio"
+              >
+                <Send className="w-3.5 h-3.5" /> Enviar
+              </Button>
+            </div>
+          </div>
+        ) : (
+          /* Normal Inputs */
+          <>
+            <div className="relative">
+              <Button 
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                variant="ghost" 
+                size="icon" 
+                className={cn("text-slate-400 h-9 w-9 shrink-0 rounded-xl", showEmojiPicker && "bg-slate-50 text-indigo-600")}
+              >
+                <Smile className="w-5 h-5" />
+              </Button>
+            </div>
+
+            <Button 
+              onClick={() => fileInputRef.current?.click()} 
+              disabled={sending}
+              variant="ghost" 
+              size="icon" 
+              className="text-slate-400 h-9 w-9 shrink-0 rounded-xl"
+              title="Anexar Foto ou Arquivo"
+            >
+              <Paperclip className="w-5 h-5" />
+            </Button>
+
+            <div className="flex-grow relative">
+              <textarea
+                rows={1}
+                placeholder="Digite sua mensagem..."
+                value={text}
+                onChange={e => setText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                className="w-full resize-none border border-slate-200 bg-slate-50 rounded-xl px-4 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:border-indigo-400 focus:bg-white transition-all max-h-32 font-sans"
+              />
+            </div>
+
+            {text.trim() ? (
+              <Button
+                onClick={handleSend}
+                disabled={sending}
+                size="icon"
+                className="h-9 w-9 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md shrink-0 active:scale-95 transition-all"
+              >
+                {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 ml-0.5" />}
+              </Button>
+            ) : (
+              <Button
+                onClick={startRecording}
+                disabled={sending}
+                size="icon"
+                variant="outline"
+                className="h-9 w-9 border-indigo-200 text-indigo-650 hover:bg-indigo-50 hover:border-indigo-350 rounded-xl shadow-sm shrink-0 active:scale-95 transition-all animate-pulse"
+                title="Gravar Áudio de Voz"
+              >
+                <Mic className="w-4 h-4 text-indigo-600" />
+              </Button>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -1150,7 +1514,7 @@ export function WhatsApp() {
     syncWhatsappStateWithPatients, patients
   } = useStore();
 
-  const [activeTab, setActiveTab] = useState<MainTab>('contatos');
+  const [activeTab, setActiveTab] = useState<MainTab>('atendimento');
   const [pendingAtendimento, setPendingAtendimento] = useState<WaChat | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const phoneParam = searchParams.get('phone');
@@ -1234,9 +1598,12 @@ export function WhatsApp() {
 
   useEffect(() => {
     loadChats();
-    const interval = setInterval(loadChats, 8000);
+    const interval = setInterval(() => {
+      loadChats();
+    }, 8000);
     return () => clearInterval(interval);
-  }, [loadChats]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evolutionInstance]);
 
   // Counts
   const filaCount = useMemo(() =>

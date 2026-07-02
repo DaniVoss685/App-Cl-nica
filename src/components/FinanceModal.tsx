@@ -305,7 +305,8 @@ export function FinanceModal({ open, onOpenChange, transactionId, initialPatient
           paymentMethod: trans.paymentMethod || 'não especificado',
           category: isPredefined ? trans.category || 'Outros' : 'Outros',
           customCategory: isPredefined ? '' : trans.category || '',
-          description: trans.description || ''
+          description: trans.description || '',
+          paymentSplits: trans.paymentSplits || []
         };
       }
     }
@@ -320,12 +321,14 @@ export function FinanceModal({ open, onOpenChange, transactionId, initialPatient
       paymentMethod: 'não especificado' as any,
       category: 'Consulta / Avaliação',
       customCategory: '',
-      description: ''
+      description: '',
+      paymentSplits: [] as any[]
     };
   };
 
   const [formData, setFormData] = useState(getInitialData());
   const [displayValue, setDisplayValue] = useState('');
+  const [displaySplits, setDisplaySplits] = useState<string[]>([]);
 
   useEffect(() => {
     if (open) {
@@ -338,6 +341,12 @@ export function FinanceModal({ open, onOpenChange, transactionId, initialPatient
         }).format(data.amount));
       } else {
         setDisplayValue('');
+      }
+      
+      if (data.paymentSplits) {
+        setDisplaySplits(data.paymentSplits.map(s => s.amount ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(s.amount) : ''));
+      } else {
+        setDisplaySplits([]);
       }
     }
   }, [open, transactionId]);
@@ -366,6 +375,24 @@ export function FinanceModal({ open, onOpenChange, transactionId, initialPatient
     }).format(numericValue));
   };
 
+  const handleSplitValueChange = (index: number, valStr: string) => {
+    const rawValue = valStr.replace(/\D/g, '');
+    const numericValue = rawValue === '' ? 0 : Number(rawValue) / 100;
+    if (isNaN(numericValue)) return;
+    
+    const splits = [...(formData.paymentSplits || [])];
+    splits[index] = { ...splits[index], amount: numericValue };
+    setFormData({ ...formData, paymentSplits: splits });
+    
+    const newDisplays = [...displaySplits];
+    const formatted = new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numericValue);
+    newDisplays[index] = formatted === '0,00' && rawValue === '' ? '' : formatted;
+    setDisplaySplits(newDisplays);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -386,7 +413,8 @@ export function FinanceModal({ open, onOpenChange, transactionId, initialPatient
       patientId: (formData.type === 'despesa' || formData.patientId === 'none') ? undefined : formData.patientId,
       appointmentId: (formData.type === 'despesa' || formData.appointmentId === 'none') ? undefined : formData.appointmentId,
       paymentMethod: formData.paymentMethod === 'não especificado' ? undefined : formData.paymentMethod,
-      paymentDate: formData.status === 'pago' ? (formData.paymentDate || format(new Date(), 'yyyy-MM-dd')) : undefined
+      paymentDate: formData.status === 'pago' ? (formData.paymentDate || format(new Date(), 'yyyy-MM-dd')) : undefined,
+      paymentSplits: formData.paymentMethod === 'múltiplo' ? formData.paymentSplits : undefined
     };
 
     if (transactionId) {
@@ -591,6 +619,7 @@ export function FinanceModal({ open, onOpenChange, transactionId, initialPatient
                      <SelectItem value="dinheiro" className="font-bold italic text-sm">💵 Dinheiro físico</SelectItem>
                      <SelectItem value="boleto" className="font-bold italic text-sm">📄 Boleto Bancário</SelectItem>
                      <SelectItem value="transferência" className="font-bold italic text-sm">🏦 TED ou Doc</SelectItem>
+                     <SelectItem value="múltiplo" className="font-bold italic text-indigo-650 bg-indigo-50/50 text-sm">🔀 Múltiplas Formas (Dividido)</SelectItem>
                    </SelectContent>
                  </Select>
                </div>
@@ -627,7 +656,189 @@ export function FinanceModal({ open, onOpenChange, transactionId, initialPatient
                  />
                </div>
              )}
- 
+
+             {formData.paymentMethod === 'múltiplo' && (
+                <div className="space-y-4 bg-indigo-50/20 p-5 rounded-2xl border border-indigo-100/50 animate-in fade-in duration-200 w-full font-sans text-xs">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-indigo-900 font-extrabold italic text-xs uppercase tracking-wider">Múltiplas Formas de Pagamento (Divisão)</Label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="bg-indigo-650 hover:bg-indigo-700 text-white font-bold text-[10px] uppercase rounded-xl h-8 cursor-pointer border-none"
+                      onClick={() => {
+                        const splits = formData.paymentSplits || [];
+                        const currentTotal = splits.reduce((sum, s) => sum + s.amount, 0);
+                        const remaining = Math.max(0, formData.amount - currentTotal);
+                        setFormData({
+                          ...formData,
+                          paymentSplits: [
+                            ...splits,
+                            { method: 'pix', amount: remaining, status: 'pago', paymentDate: formData.paymentDate || formData.dueDate }
+                          ]
+                        });
+                        setDisplaySplits([
+                          ...displaySplits,
+                          remaining === 0 ? '' : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(remaining)
+                        ]);
+                      }}
+                    >
+                      + Adicionar Forma
+                    </Button>
+                  </div>
+
+                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                    {(formData.paymentSplits || []).map((split, index) => (
+                      <div key={index} className="bg-white p-3 rounded-xl border border-slate-150 shadow-sm flex flex-col md:flex-row items-center gap-3">
+                        <div className="flex-1 w-full">
+                          <Label className="text-[9px] text-slate-400 font-bold uppercase mb-1 block">Forma</Label>
+                          <Select 
+                            value={split.method} 
+                            onValueChange={(v) => {
+                              const splits = [...(formData.paymentSplits || [])];
+                              splits[index] = { ...split, method: v as any };
+                              setFormData({ ...formData, paymentSplits: splits });
+                            }}
+                          >
+                            <SelectTrigger className="h-10 border-slate-200 text-xs font-bold w-full rounded-lg bg-white">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="z-[6000]">
+                              <SelectItem value="pix">Pix</SelectItem>
+                              <SelectItem value="cartão de crédito">Cartão de Crédito</SelectItem>
+                              <SelectItem value="cartão de débito">Cartão de Débito</SelectItem>
+                              <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                              <SelectItem value="boleto">Boleto</SelectItem>
+                              <SelectItem value="transferência">Transferência</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="w-full md:w-32">
+                          <Label className="text-[9px] text-slate-400 font-bold uppercase mb-1 block">Valor (R$)</Label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 font-mono">R$</span>
+                            <Input
+                              type="text"
+                              placeholder="0,00"
+                              className="pl-8 h-10 border-slate-200 text-xs font-bold w-full rounded-lg font-mono bg-white"
+                              value={displaySplits[index] || ''}
+                              onChange={(e) => handleSplitValueChange(index, e.target.value)}
+                            />
+                          </div>
+                        </div>
+
+                        {split.method === 'cartão de crédito' && (
+                          <div className="w-full md:w-20">
+                            <Label className="text-[9px] text-slate-400 font-bold uppercase mb-1 block">Parcelas</Label>
+                            <Select 
+                              value={String(split.installments || 1)} 
+                              onValueChange={(v) => {
+                                const splits = [...(formData.paymentSplits || [])];
+                                splits[index] = { ...split, installments: Number(v) };
+                                setFormData({ ...formData, paymentSplits: splits });
+                              }}
+                            >
+                              <SelectTrigger className="h-10 border-slate-200 text-xs font-bold w-full rounded-lg bg-white">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="z-[6000]">
+                                {[...Array(12)].map((_, i) => (
+                                  <SelectItem key={i + 1} value={String(i + 1)}>{i + 1}x</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+
+                        <div className="w-full md:w-28">
+                          <Label className="text-[9px] text-slate-400 font-bold uppercase mb-1 block">Status</Label>
+                          <Select 
+                            value={split.status} 
+                            onValueChange={(v) => {
+                              const splits = [...(formData.paymentSplits || [])];
+                              splits[index] = { ...split, status: v as any };
+                              setFormData({ ...formData, paymentSplits: splits });
+                            }}
+                          >
+                            <SelectTrigger className="h-10 border-slate-200 text-xs font-bold w-full rounded-lg bg-white">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="z-[6000]">
+                              <SelectItem value="pago">Pago</SelectItem>
+                              <SelectItem value="pendente">Pendente</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {split.status === 'pago' && (
+                          <div className="w-full md:w-36">
+                            <Label className="text-[9px] text-slate-400 font-bold uppercase mb-1 block">Data Pagto.</Label>
+                            <Input
+                              type="date"
+                              className="h-10 border-slate-200 text-xs font-bold w-full rounded-lg bg-white"
+                              value={split.paymentDate || formData.paymentDate || formData.dueDate}
+                              onChange={(e) => {
+                                const splits = [...(formData.paymentSplits || [])];
+                                splits[index] = { ...split, paymentDate: e.target.value };
+                                setFormData({ ...formData, paymentSplits: splits });
+                              }}
+                            />
+                          </div>
+                        )}
+
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 text-red-500 hover:text-red-750 hover:bg-red-50 mt-4 shrink-0 rounded-xl cursor-pointer"
+                          onClick={() => {
+                            const splits = (formData.paymentSplits || []).filter((_, i) => i !== index);
+                            setFormData({ ...formData, paymentSplits: splits });
+                            setDisplaySplits(displaySplits.filter((_, i) => i !== index));
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+
+                    {(formData.paymentSplits || []).length === 0 && (
+                      <p className="text-slate-400 font-bold text-xs italic text-center py-4">Nenhuma forma de pagamento adicionada.</p>
+                    )}
+                  </div>
+
+                  {/* Resumo do Split */}
+                  {(() => {
+                    const splits = formData.paymentSplits || [];
+                    const totalSplits = splits.reduce((sum, s) => sum + s.amount, 0);
+                    const totalPaid = splits.filter(s => s.status === 'pago').reduce((sum, s) => sum + s.amount, 0);
+                    const limitValue = formData.amount || 0;
+                    const matchesTotal = Math.abs(totalSplits - limitValue) < 0.01;
+
+                    return (
+                      <div className="pt-3 border-t border-indigo-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 font-sans text-xs">
+                        <div className="space-y-1">
+                          <div className="flex gap-2">
+                            <span className="text-slate-500 font-bold">Lançado: R$ {totalSplits.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            <span className="text-slate-350">•</span>
+                            <span className="text-green-600 font-bold">Pago: R$ {totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                          <div className="font-extrabold text-[10px] uppercase text-indigo-700">
+                            Total Cobrado: R$ {limitValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </div>
+                        </div>
+                        <div className={cn(
+                          "px-3 py-1 rounded-full font-black text-[10px] uppercase border tracking-wider",
+                          matchesTotal ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200 animate-pulse"
+                        )}>
+                          {matchesTotal ? 'Valores Fecham' : `Diferença: R$ ${(limitValue - totalSplits).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
              {/* DATAS: VENCIMENTO DA CONTA & DATA DE PAGAMENTO */}
              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 bg-slate-50/50 p-6 rounded-[2rem] border border-slate-100/60">
                <div className="space-y-2">

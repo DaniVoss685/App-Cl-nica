@@ -101,8 +101,30 @@ async function startServer() {
           timeout: 12000
         });
         
-        const msgs = findRes.data?.messages?.records || findRes.data?.records || findRes.data?.data?.records || findRes.data?.data || findRes.data || [];
-        const rawMsg = msgs.find((m: any) => (m.key?.id === msgId) || (m.id === msgId));
+        let msgs = findRes.data?.messages?.records || findRes.data?.records || findRes.data?.data?.records || findRes.data?.data || findRes.data || [];
+        let rawMsg = msgs.find((m: any) => (m.key?.id === msgId) || (m.id === msgId));
+        
+        if (!rawMsg) {
+          console.log(`[WhatsApp Media Proxy] Mensagem não encontrada com JID. Tentando fallback apenas com ID...`);
+          try {
+            const fallbackRes = await axios.post(`${cleanEvoUrl}/chat/findMessages/${instance}`, {
+              where: { 
+                key: { 
+                  id: msgId
+                } 
+              },
+              limit: 10
+            }, {
+              headers: { 'apikey': apiKey },
+              httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+              timeout: 12000
+            });
+            msgs = fallbackRes.data?.messages?.records || fallbackRes.data?.records || fallbackRes.data?.data?.records || fallbackRes.data?.data || fallbackRes.data || [];
+            rawMsg = msgs.find((m: any) => (m.key?.id === msgId) || (m.id === msgId));
+          } catch (fErr: any) {
+            console.error(`[WhatsApp Media Proxy] Fallback de busca falhou:`, fErr.message);
+          }
+        }
         
         if (rawMsg) {
           console.log(`[WhatsApp Media Proxy] Mensagem encontrada! Chamando getBase64FromMediaMessage...`);
@@ -116,9 +138,16 @@ async function startServer() {
           });
           
           const mediaData = decodeRes.data;
-          const base64Str = mediaData.base64 || mediaData.buffer;
+          let base64Str = mediaData.base64 || mediaData.buffer || mediaData.media || mediaData;
+          if (base64Str && typeof base64Str === "object") {
+            base64Str = base64Str.base64 || base64Str.buffer || base64Str.media;
+          }
           
           if (base64Str && typeof base64Str === "string") {
+            // Remove o prefixo data URI se existir
+            if (base64Str.includes(",")) {
+              base64Str = base64Str.split(",")[1];
+            }
             const buffer = Buffer.from(base64Str, "base64");
             let mimeType = mediaData.mimetype || mediaData.mimeType || "image/jpeg";
             

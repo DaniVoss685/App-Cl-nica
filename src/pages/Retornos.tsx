@@ -24,7 +24,7 @@ import { toast } from 'sonner';
 import { whatsappService } from '../services/whatsappService';
 
 export function Retornos() {
-  const { patients, appointments, services, professionals } = useStore();
+  const { patients, appointments, services, professionals, updateAppointment } = useStore();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'agendados' | 'ausentes'>('agendados');
@@ -38,15 +38,29 @@ export function Retornos() {
 
   const returnedPatients = useMemo(() => {
     return patients.filter(p => {
-      const patientAppts = appointments.filter(a => a.patientId === p.id && a.status === 'realizado');
-      return patientAppts.length > 1;
+      const hasReturned = appointments.some(a => a.patientId === p.id && a.type === 'retorno' && a.status === 'realizado');
+      return hasReturned;
     });
   }, [patients, appointments]);
 
+  // Taxa de Retorno
   const returnRate = useMemo(() => {
     if (patientsWithAppointments.length === 0) return 0;
     return Math.round((returnedPatients.length / patientsWithAppointments.length) * 100);
   }, [patientsWithAppointments, returnedPatients]);
+
+  const returnGapCount = useMemo(() => {
+    return patients.filter(p => {
+      const lastAppt = appointments
+        .filter(a => a.patientId === p.id && a.status === 'realizado')
+        .sort((a, b) => b.date.localeCompare(a.date))[0];
+      if (!lastAppt) return false;
+      const lastDate = new Date(lastAppt.date + 'T12:00:00');
+      const today = new Date();
+      const gap = Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+      return gap >= 30;
+    }).length;
+  }, [patients, appointments]);
 
   const recoveredCount = useMemo(() => {
     const today = new Date();
@@ -88,9 +102,9 @@ export function Retornos() {
     return patients.map(p => {
       const patientAppts = appointments
         .filter(a => a.patientId === p.id && a.status === 'realizado')
-        .sort((a, b) => b.date.localeCompare(a.date));
+        .sort((a, b) => b.date.localeCompare(a.date))[0];
       
-      const lastAppt = patientAppts[0];
+      const lastAppt = patientAppts;
       if (!lastAppt) return null;
 
       const lastDate = new Date(lastAppt.date + 'T12:00:00');
@@ -131,11 +145,15 @@ export function Retornos() {
     }
   };
 
-  const handleSendWhatsAppInternal = (patientId: string, text: string) => {
+  const handleSendWhatsAppInternal = (patientId: string, text: string, apptId?: string) => {
     const patient = patients.find(p => p.id === patientId);
     if (!patient || !patient.phone) {
       toast.error('Telefone do paciente não disponível');
       return;
+    }
+    
+    if (apptId) {
+      updateAppointment(apptId, { confirmationStatus: 'mensagem enviada' });
     }
     
     const phoneClean = patient.phone.replace(/\D/g, '');
@@ -348,7 +366,7 @@ export function Retornos() {
                                   const [year, month, day] = ret.date.split('-').map(Number);
                                   const formattedDate = format(new Date(year, month - 1, day), 'dd/MM/yyyy');
                                   const returnMsg = `Olá ${patient.name}, tudo bem? Lembramos que você possui um retorno de ${service?.name || 'procedimento'} agendado para o dia ${formattedDate} às ${ret.startTime} com o(a) Dr(a). ${professional?.name || 'Profissional'}. Aguardamos você!`;
-                                  handleSendWhatsAppInternal(ret.patientId, returnMsg);
+                                  handleSendWhatsAppInternal(ret.patientId, returnMsg, ret.id);
                                 }}
                                 title="Enviar lembrete de retorno via WhatsApp integrado"
                                 className="h-9 w-9 bg-green-50 text-green-600 hover:bg-green-600 hover:text-white rounded-xl flex items-center justify-center transition-all cursor-pointer border-none"

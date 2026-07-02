@@ -15,7 +15,9 @@ import {
   InventoryItem,
   User,
   FileItem,
-  SupplyExpense
+  SupplyExpense,
+  DoctorNote,
+  BeforeAfterPhoto
 } from '../types';
 
 // ── WhatsApp types ────────────────────────────────────────────────────────────
@@ -70,6 +72,8 @@ interface ClinicState {
   reminders: Reminder[];
   inventory: InventoryItem[];
   supplyExpenses: SupplyExpense[];
+  doctorNotes: DoctorNote[];
+  beforeAfterPhotos: BeforeAfterPhoto[];
   serviceCategories: string[];
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (collapsed: boolean) => void;
@@ -118,6 +122,11 @@ interface ClinicState {
   addMedicalRecord: (r: Omit<MedicalRecord, 'id'>) => void;
   updateMedicalRecord: (id: string, data: Partial<MedicalRecord>) => void;
   removeMedicalRecord: (id: string) => void;
+  addDoctorNote: (n: Omit<DoctorNote, 'id' | 'createdAt'>) => void;
+  updateDoctorNote: (id: string, data: Partial<DoctorNote>) => void;
+  removeDoctorNote: (id: string) => void;
+  addBeforeAfterPhoto: (p: Omit<BeforeAfterPhoto, 'id' | 'createdAt'>) => void;
+  removeBeforeAfterPhoto: (id: string) => void;
   addReminder: (rem: Omit<Reminder, 'id' | 'createdAt'>) => void;
   removeReminder: (id: string) => void;
   addInventoryItem: (item: Omit<InventoryItem, 'id'>) => void;
@@ -282,6 +291,8 @@ export const useStore = create<ClinicState>()(
       insights: [],
       professionals: [],
       medicalRecords: [],
+      doctorNotes: [],
+      beforeAfterPhotos: [],
       documents: [],
       reminders: [],
       inventory: [],
@@ -315,33 +326,6 @@ export const useStore = create<ClinicState>()(
       setEvolutionConfig: (url, key, instance) => set({ evolutionApiUrl: url.trim(), evolutionApiKey: key.trim(), evolutionInstance: instance.trim() }),
       setWhatsappConnected: (connected) => set({ whatsappConnected: connected }),
       setWhatsappChats: (chats) => set((state) => {
-        const newMessages = { ...state.whatsappMessages };
-        let messagesChanged = false;
-
-        chats.forEach(chat => {
-          if (!chat.lastMessage) return;
-
-          const chatMsgs = newMessages[chat.id] || [];
-          
-          // Verifica se a última mensagem já existe (por texto e timestamp próximo)
-          const textMatch = chatMsgs.some(m => 
-            m.text === chat.lastMessage && 
-            Math.abs(m.timestamp - chat.lastMessageTimestamp) < 10
-          );
-
-          if (!textMatch) {
-            const newMsg: WaMessage = {
-              id: `api-last-${chat.id}-${chat.lastMessageTimestamp}`,
-              fromMe: chat.lastMessageFromMe ?? false,
-              text: chat.lastMessage,
-              timestamp: chat.lastMessageTimestamp,
-              status: 'READ',
-            };
-            newMessages[chat.id] = [...chatMsgs, newMsg].sort((a, b) => a.timestamp - b.timestamp);
-            messagesChanged = true;
-          }
-        });
-
         // Preserva chats locais que estão em atendimento/fila ou possuem histórico de mensagens
         // mesmo que a Evolution API não os retorne na listagem de chats recentes.
         const apiChatIds = new Set(chats.map(c => c.id));
@@ -354,7 +338,7 @@ export const useStore = create<ClinicState>()(
 
         const mergedChats = [...chats];
         keptLocalChats.forEach(localChat => {
-          const msgs = newMessages[localChat.id] || [];
+          const msgs = state.whatsappMessages[localChat.id] || [];
           const lastMsg = msgs[msgs.length - 1];
           const updatedChat = { ...localChat };
           if (lastMsg) {
@@ -368,42 +352,151 @@ export const useStore = create<ClinicState>()(
         // Ordena por timestamp da última mensagem decrescente
         mergedChats.sort((a, b) => b.lastMessageTimestamp - a.lastMessageTimestamp);
 
-        return messagesChanged 
-          ? { whatsappChats: mergedChats, whatsappMessages: newMessages }
-          : { whatsappChats: mergedChats };
+        return { whatsappChats: mergedChats };
       }),
       upsertWhatsappMessages: (chatId, messages) => set((state) => {
         const existing = state.whatsappMessages[chatId] || [];
-        // Merge by id — avoid duplicates
+        
+        // 1. Unifica mensagens existentes e novas por ID usando Map
         const map = new Map<string, WaMessage>();
         existing.forEach(m => map.set(m.id, m));
-        messages.forEach(m => map.set(m.id, m));
-        const merged = Array.from(map.values()).sort((a, b) => a.timestamp - b.timestamp);
-        return { whatsappMessages: { ...state.whatsappMessages, [chatId]: merged } };
+        
+        messages.forEach(newMsg => {
+          const old = map.get(newMsg.id);
+          if (old) {
+            map.set(newMsg.id, {
+              ...old,
+              ...newMsg,
+              mediaUrl: newMsg.mediaUrl || old.mediaUrl,
+              mediaMimeType: newMsg.mediaMimeType || old.mediaMimeType,
+              mediaType: newMsg.mediaType || old.mediaType,
+            });
+          } else {
+            map.set(newMsg.id, newMsg);
+          }
+        });
+
+        // 2. Desduplicação estrita secundária por conteúdo + tipo + proximidade temporal (180 segundos)
+        const list = Array.from(map.values()).sort((a, b) => a.timestamp - b.timestamp);
+        const uniqueList: WaMessage[] = [];
+
+        for (const msg of list) {
+          // Verifica se já existe uma mensagem equivalente na nossa lista única
+          const existingIdx = uniqueList.findIndex(em => {
+            if (em.fromMe !== msg.fromMe) return false;
+            
+            // Caso 1: Se a mensagem existente for otimista, unifica pelo tipo/conteúdo independente do timestamp (imune a clock drift)
+            const isOptimistic = em.id.startsWith('opt-');
+            
+            // Caso 2: Se já for real, unifica se estiver na janela de 180s (ambas usam o relógio do servidor)
+            const timeDiff = Math.abs(em.timestamp - msg.timestamp);
+            const timeMatch = isOptimistic || (timeDiff < 180);
+            if (!timeMatch) return false;
+
+            // Se for áudio
+            const isAudio1 = em.mediaType === 'audio' || em.text === '[Áudio]' || em.text === '[audio]' || em.text === 'Mensagem de áudio';
+            const isAudio2 = msg.mediaType === 'audio' || msg.text === '[Áudio]' || msg.text === '[audio]' || msg.text === 'Mensagem de áudio';
+            if (isAudio1 && isAudio2) return true;
+
+            // Se for imagem
+            const isImg1 = em.mediaType === 'image' || em.text === '[Imagem]' || em.text === '[imagem]' || (em.text && (em.text.endsWith('.png') || em.text.endsWith('.jpg') || em.text.endsWith('.jpeg')));
+            const isImg2 = msg.mediaType === 'image' || msg.text === '[Imagem]' || msg.text === '[imagem]' || (msg.text && (msg.text.endsWith('.png') || msg.text.endsWith('.jpg') || msg.text.endsWith('.jpeg')));
+            if (isImg1 && isImg2) return true;
+
+            // Se for documento
+            const isDoc1 = em.mediaType === 'document' || em.text === '[Documento]' || em.text === '[documento]' || (em.text && em.text.endsWith('.pdf')) || em.text === 'Documento';
+            const isDoc2 = msg.mediaType === 'document' || msg.text === '[Documento]' || msg.text === '[documento]' || (msg.text && msg.text.endsWith('.pdf')) || msg.text === 'Documento';
+            if (isDoc1 && isDoc2) return true;
+
+            // Se for texto normal
+            return isOptimistic || ((em.text || '').trim() === (msg.text || '').trim());
+          });
+
+          if (existingIdx >= 0) {
+            // Unifica as mídias e IDs
+            uniqueList[existingIdx] = {
+              ...uniqueList[existingIdx],
+              ...msg,
+              id: (!msg.id.startsWith('opt-') && !msg.id.startsWith('api-last-') ? msg.id : uniqueList[existingIdx].id),
+              mediaUrl: uniqueList[existingIdx].mediaUrl || msg.mediaUrl,
+              mediaMimeType: uniqueList[existingIdx].mediaMimeType || msg.mediaMimeType,
+              mediaType: uniqueList[existingIdx].mediaType || msg.mediaType,
+              text: (msg.text && !msg.text.startsWith('[') ? msg.text : uniqueList[existingIdx].text),
+            };
+          } else {
+            uniqueList.push(msg);
+          }
+        }
+
+        return { whatsappMessages: { ...state.whatsappMessages, [chatId]: uniqueList } };
       }),
       addOutboundMessage: (chatId, message, optimisticId) => set((state) => {
         const existing = state.whatsappMessages[chatId] || [];
         
-        let updated;
+        let list = [...existing];
         if (optimisticId) {
-          const idx = existing.findIndex(m => m.id === optimisticId);
-          if (idx >= 0) {
-            updated = existing.map((m, i) => i === idx ? message : m);
+          list = list.filter(m => m.id !== optimisticId);
+        }
+        
+        // Insere a nova mensagem na lista
+        list.push(message);
+
+        // Desduplicação estrita secundária por conteúdo + tipo + proximidade temporal (180 segundos)
+        const sortedList = list.sort((a, b) => a.timestamp - b.timestamp);
+        const uniqueList: WaMessage[] = [];
+
+        for (const msg of sortedList) {
+          const existingIdx = uniqueList.findIndex(em => {
+            if (em.fromMe !== msg.fromMe) return false;
+            
+            // Caso 1: Se a mensagem existente for otimista, unifica pelo tipo/conteúdo independente do timestamp (imune a clock drift)
+            const isOptimistic = em.id.startsWith('opt-');
+            
+            // Caso 2: Se já for real, unifica se estiver na janela de 180s (ambas usam o relógio do servidor)
+            const timeDiff = Math.abs(em.timestamp - msg.timestamp);
+            const timeMatch = isOptimistic || (timeDiff < 180);
+            if (!timeMatch) return false;
+
+            const isAudio1 = em.mediaType === 'audio' || em.text === '[Áudio]' || em.text === '[audio]' || em.text === 'Mensagem de áudio';
+            const isAudio2 = msg.mediaType === 'audio' || msg.text === '[Áudio]' || msg.text === '[audio]' || msg.text === 'Mensagem de áudio';
+            if (isAudio1 && isAudio2) return true;
+
+            const isImg1 = em.mediaType === 'image' || em.text === '[Imagem]' || em.text === '[imagem]' || (em.text && (em.text.endsWith('.png') || em.text.endsWith('.jpg') || em.text.endsWith('.jpeg')));
+            const isImg2 = msg.mediaType === 'image' || msg.text === '[Imagem]' || msg.text === '[imagem]' || (msg.text && (msg.text.endsWith('.png') || em.text.endsWith('.jpg') || msg.text.endsWith('.jpeg')));
+            if (isImg1 && isImg2) return true;
+
+            const isDoc1 = em.mediaType === 'document' || em.text === '[Documento]' || em.text === '[documento]' || (em.text && em.text.endsWith('.pdf')) || em.text === 'Documento';
+            const isDoc2 = msg.mediaType === 'document' || msg.text === '[Documento]' || msg.text === '[documento]' || (msg.text && msg.text.endsWith('.pdf')) || msg.text === 'Documento';
+            if (isDoc1 && isDoc2) return true;
+
+            return isOptimistic || ((em.text || '').trim() === (msg.text || '').trim());
+          });
+
+          if (existingIdx >= 0) {
+            uniqueList[existingIdx] = {
+              ...uniqueList[existingIdx],
+              ...msg,
+              id: (!msg.id.startsWith('opt-') && !msg.id.startsWith('api-last-') ? msg.id : uniqueList[existingIdx].id),
+              mediaUrl: uniqueList[existingIdx].mediaUrl || msg.mediaUrl,
+              mediaMimeType: uniqueList[existingIdx].mediaMimeType || msg.mediaMimeType,
+              mediaType: uniqueList[existingIdx].mediaType || msg.mediaType,
+              text: (msg.text && !msg.text.startsWith('[') ? msg.text : uniqueList[existingIdx].text),
+            };
           } else {
-            updated = [...existing, message];
+            uniqueList.push(msg);
           }
-        } else {
-          const idx = existing.findIndex(m => m.id === message.id);
-          updated = idx >= 0
-            ? existing.map((m, i) => i === idx ? message : m)
-            : [...existing, message];
         }
 
-        // Promove para 'atendimento' ao enviar mensagem se não estiver finalizado
+        // Promove o chat para 'atendimento'
         const currentStatus = state.chatStatuses[chatId];
         const newStatuses = { ...state.chatStatuses };
-        if (currentStatus !== 'atendimento') {
+        if (currentStatus !== 'atendimento' && currentStatus !== 'finalizado') {
           newStatuses[chatId] = 'atendimento';
+          get().syncToSupabase('status_chats_clinica', {
+            id: chatId,
+            status: 'atendimento',
+            updated_at: new Date().toISOString(),
+          }, 'upsert');
         }
 
         // Atualiza a última mensagem do chat correspondente na lista
@@ -420,7 +513,7 @@ export const useStore = create<ClinicState>()(
         });
 
         return { 
-          whatsappMessages: { ...state.whatsappMessages, [chatId]: updated },
+          whatsappMessages: { ...state.whatsappMessages, [chatId]: uniqueList },
           chatStatuses: newStatuses,
           whatsappChats: updatedChats
         };
@@ -1041,7 +1134,61 @@ export const useStore = create<ClinicState>()(
           if (returnAppt) {
             newAppointments.push(returnAppt);
           }
-          return { appointments: newAppointments };
+          
+          let finalFinance = state.finance;
+          if (newAppt.status === 'realizado' || newAppt.status === 'finalizado') {
+            const patient = state.patients.find(p => p.id === newAppt.patientId);
+            const service = services.find(s => s.id === newAppt.serviceId);
+            const pkg = state.packages.find(p => p.id === newAppt.packageId);
+            const description = `Consulta - ${patient?.name || 'Paciente'} (${service?.name || pkg?.name || 'Atendimento'})`;
+
+            if (newAppt.paymentMethod === 'múltiplo' && newAppt.paymentSplits && newAppt.paymentSplits.length > 0) {
+              const txStatus = newAppt.paymentSplits.every(s => s.status === 'pago') ? 'pago' : 'pendente';
+              const totalSplitsAmount = newAppt.paymentSplits.reduce((sum, s) => sum + s.amount, 0);
+              
+              const newTx = {
+                id: generateUUID(),
+                patientId: newAppt.patientId,
+                appointmentId: newAppt.id,
+                packageId: newAppt.packageId || undefined,
+                type: 'receita' as const,
+                amount: totalSplitsAmount || newAppt.value || 0,
+                dueDate: newAppt.date,
+                paymentDate: txStatus === 'pago' ? (newAppt.paymentDate || newAppt.date) : undefined,
+                status: txStatus as 'pago' | 'pendente',
+                paymentMethod: 'múltiplo' as const,
+                category: 'Atendimentos',
+                description: description,
+                paymentSplits: newAppt.paymentSplits
+              };
+              finalFinance = [...state.finance, newTx];
+              get().syncToSupabase('financeiro_clinica', newTx, 'insert');
+            } else {
+              const txAmount = newAppt.paymentStatus === 'parcial'
+                ? (newAppt.upfrontPaidAmount || 0)
+                : (newAppt.paymentStatus === 'pago' ? (newAppt.value || 0) : 0);
+
+              const txData = {
+                id: generateUUID(),
+                patientId: newAppt.patientId,
+                appointmentId: newAppt.id,
+                packageId: newAppt.packageId || undefined,
+                type: 'receita' as const,
+                amount: txAmount,
+                dueDate: newAppt.date,
+                paymentDate: newAppt.paymentStatus === 'pago' || newAppt.paymentStatus === 'parcial' ? (newAppt.paymentDate || newAppt.date) : undefined,
+                status: (newAppt.paymentStatus === 'pago' ? 'pago' : 'pendente') as 'pago' | 'pendente',
+                paymentMethod: newAppt.paymentMethod || undefined,
+                cardInstallments: newAppt.cardInstallments || undefined,
+                category: 'Atendimentos',
+                description
+              };
+              finalFinance = [...state.finance, txData];
+              get().syncToSupabase('financeiro_clinica', txData, 'insert');
+            }
+          }
+          
+          return { appointments: newAppointments, finance: finalFinance };
         });
 
         get().syncToSupabase('agendamentos_clinica', newAppt, 'insert');
@@ -1152,10 +1299,76 @@ export const useStore = create<ClinicState>()(
           }
         }
 
+        // Finance integration
+        let finalFinance = state.finance;
+        if (appt && (appt.status === 'realizado' || appt.status === 'finalizado')) {
+          const patient = state.patients.find(p => p.id === appt.patientId);
+          const service = state.services.find(s => s.id === appt.serviceId);
+          const pkg = state.packages.find(p => p.id === appt.packageId);
+          const description = `Consulta - ${patient?.name || 'Paciente'} (${service?.name || pkg?.name || 'Atendimento'})`;
+          
+          // Delete all existing financial transactions for this appointment
+          const existingTxs = state.finance.filter(f => f.appointmentId === appt.id);
+          existingTxs.forEach(tx => get().syncToSupabase('financeiro_clinica', { id: tx.id }, 'delete'));
+          
+          // Remove them from local state
+          const cleanFinance = state.finance.filter(f => f.appointmentId !== appt.id);
+
+          if (appt.paymentMethod === 'múltiplo' && appt.paymentSplits && appt.paymentSplits.length > 0) {
+            const txStatus = appt.paymentSplits.every(s => s.status === 'pago') ? 'pago' : 'pendente';
+            const totalSplitsAmount = appt.paymentSplits.reduce((sum, s) => sum + s.amount, 0);
+            
+            const newTx = {
+              id: generateUUID(),
+              patientId: appt.patientId,
+              appointmentId: appt.id,
+              packageId: appt.packageId || undefined,
+              type: 'receita' as const,
+              amount: totalSplitsAmount || appt.value || 0,
+              dueDate: appt.date,
+              paymentDate: txStatus === 'pago' ? (appt.paymentDate || appt.date) : undefined,
+              status: txStatus as 'pago' | 'pendente',
+              paymentMethod: 'múltiplo' as const,
+              category: 'Atendimentos',
+              description: description,
+              paymentSplits: appt.paymentSplits
+            };
+            finalFinance = [...cleanFinance, newTx];
+            get().syncToSupabase('financeiro_clinica', newTx, 'insert');
+          } else {
+            const txAmount = appt.paymentStatus === 'parcial'
+              ? (appt.upfrontPaidAmount || 0)
+              : (appt.paymentStatus === 'pago' ? (appt.value || 0) : 0);
+
+            const txData = {
+              id: generateUUID(),
+              patientId: appt.patientId,
+              appointmentId: appt.id,
+              packageId: appt.packageId || undefined,
+              type: 'receita' as const,
+              amount: txAmount,
+              dueDate: appt.date,
+              paymentDate: appt.paymentStatus === 'pago' || appt.paymentStatus === 'parcial' ? (appt.paymentDate || appt.date) : undefined,
+              status: (appt.paymentStatus === 'pago' ? 'pago' : 'pendente') as 'pago' | 'pendente',
+              paymentMethod: appt.paymentMethod || undefined,
+              cardInstallments: appt.cardInstallments || undefined,
+              category: 'Atendimentos',
+              description
+            };
+            finalFinance = [...cleanFinance, txData];
+            get().syncToSupabase('financeiro_clinica', txData, 'insert');
+          }
+        } else if (appt) {
+          const existingTxs = state.finance.filter(f => f.appointmentId === appt.id);
+          existingTxs.forEach(tx => get().syncToSupabase('financeiro_clinica', { id: tx.id }, 'delete'));
+          finalFinance = state.finance.filter(f => f.appointmentId !== appt.id);
+        }
+
         return { 
           appointments: finalAppointments, 
           inventory: updatedInventory,
-          supplyExpenses: updatedExpenses 
+          supplyExpenses: updatedExpenses,
+          finance: finalFinance
         };
       }),
       removeAppointment: (id) => {
@@ -1166,7 +1379,14 @@ export const useStore = create<ClinicState>()(
             returnIdToDelete = returnAppt.id;
           }
           const filtered = state.appointments.filter(a => a.id !== id && a.id !== returnIdToDelete);
-          return { appointments: filtered };
+          const filteredFinance = state.finance.filter(f => f.appointmentId !== id);
+          
+          const existingTx = state.finance.find(f => f.appointmentId === id);
+          if (existingTx) {
+            get().syncToSupabase('financeiro_clinica', { id: existingTx.id }, 'delete');
+          }
+          
+          return { appointments: filtered, finance: filteredFinance };
         });
         
         get().syncToSupabase('agendamentos_clinica', { id }, 'delete');
@@ -1203,7 +1423,37 @@ export const useStore = create<ClinicState>()(
         return { finance: updated };
       }),
       removeFinance: (id) => {
-        set((state) => ({ finance: state.finance.filter(f => f.id !== id) }));
+        set((state) => {
+          const tx = state.finance.find(f => f.id === id);
+          let updatedAppointments = state.appointments;
+          
+          if (tx && tx.appointmentId) {
+            updatedAppointments = state.appointments.map(a => 
+              a.id === tx.appointmentId 
+                ? { 
+                    ...a, 
+                    paymentStatus: 'pendente' as const,
+                    paymentMethod: undefined,
+                    cardInstallments: undefined,
+                    upfrontPaid: false,
+                    upfrontPaidAmount: 0,
+                    paymentDate: undefined
+                  } 
+                : a
+            );
+            
+            const updatedAppt = updatedAppointments.find(a => a.id === tx.appointmentId);
+            if (updatedAppt) {
+              get().syncToSupabase('agendamentos_clinica', updatedAppt, 'update');
+            }
+          }
+          
+          return {
+            finance: state.finance.filter(f => f.id !== id),
+            appointments: updatedAppointments
+          };
+        });
+        
         get().syncToSupabase('financeiro_clinica', { id }, 'delete');
       },
       
@@ -1255,6 +1505,13 @@ export const useStore = create<ClinicState>()(
       addMedicalRecord: (r) => set((state) => ({ medicalRecords: [{ ...r, id: generateUUID() }, ...state.medicalRecords] })),
       updateMedicalRecord: (id, data) => set((state) => ({ medicalRecords: state.medicalRecords.map(r => r.id === id ? { ...r, ...data } : r) })),
       removeMedicalRecord: (id) => set((state) => ({ medicalRecords: state.medicalRecords.filter(r => r.id !== id) })),
+      
+      addDoctorNote: (n) => set((state) => ({ doctorNotes: [{ ...n, id: generateUUID(), createdAt: new Date().toISOString() }, ...state.doctorNotes] })),
+      updateDoctorNote: (id, data) => set((state) => ({ doctorNotes: state.doctorNotes.map(n => n.id === id ? { ...n, ...data } : n) })),
+      removeDoctorNote: (id) => set((state) => ({ doctorNotes: state.doctorNotes.filter(n => n.id !== id) })),
+
+      addBeforeAfterPhoto: (p) => set((state) => ({ beforeAfterPhotos: [{ ...p, id: generateUUID(), createdAt: new Date().toISOString() }, ...state.beforeAfterPhotos] })),
+      removeBeforeAfterPhoto: (id) => set((state) => ({ beforeAfterPhotos: state.beforeAfterPhotos.filter(p => p.id !== id) })),
       
       addReminder: (rem) => set((state) => ({ reminders: [{ ...rem, id: generateUUID(), createdAt: new Date().toISOString() }, ...state.reminders] })),
       removeReminder: (id) => set((state) => ({ reminders: state.reminders.filter(r => r.id !== id) })),

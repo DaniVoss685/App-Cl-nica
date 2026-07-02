@@ -156,7 +156,13 @@ function normalizeMessage(raw: any, apiUrl?: string): WaMessage {
     id: raw.key?.id ?? raw.id ?? String(Math.random()),
     fromMe: raw.key?.fromMe ?? raw.fromMe ?? false,
     text,
-    timestamp: raw.messageTimestamp ?? raw.timestamp ?? 0,
+    timestamp: (() => {
+      let ts = raw.messageTimestamp ?? raw.timestamp ?? 0;
+      if (ts > 10000000000) {
+        ts = Math.floor(ts / 1000);
+      }
+      return ts;
+    })(),
     status: raw.status,
     pushName: raw.pushName,
     mediaType,
@@ -339,6 +345,38 @@ export async function sendMediaMessage(
     status: 'PENDING',
     mediaType,
     mediaMimeType: mimeType,
+  };
+}
+
+export async function sendWhatsAppAudio(
+  apiUrl: string,
+  apiKey: string,
+  instance: string,
+  remoteJid: string,
+  mediaBase64: string // Base64 puro
+): Promise<WaMessage> {
+  let number = remoteJid.includes('@') ? remoteJid.split('@')[0] : remoteJid;
+  const hasLetters = /[a-zA-Z]/.test(number);
+  if (!hasLetters) {
+    number = number.replace(/\D/g, '');
+    if (number.length === 10 || number.length === 11) {
+      number = `55${number}`;
+    }
+  }
+
+  const data = await proxyPost(apiUrl, apiKey, `/message/sendWhatsAppAudio/${instance}`, {
+    number,
+    audio: mediaBase64
+  });
+
+  return {
+    id: data?.key?.id ?? data?.id ?? `out-audio-${Date.now()}`,
+    fromMe: true,
+    text: '[Áudio]',
+    timestamp: data?.messageTimestamp ?? Math.floor(Date.now() / 1000),
+    status: 'PENDING',
+    mediaType: 'audio',
+    mediaMimeType: 'audio/ogg'
   };
 }
 

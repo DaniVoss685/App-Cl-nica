@@ -82,6 +82,14 @@ export interface Package {
   upfrontPaymentValue?: number;
 }
 
+export interface PaymentSplit {
+  method: 'pix' | 'cartão de crédito' | 'cartão de débito' | 'dinheiro' | 'boleto' | 'transferência';
+  amount: number;
+  installments?: number;
+  status: 'pago' | 'pendente';
+  paymentDate?: string;
+}
+
 export interface Appointment {
   id: string;
   patientId: string;
@@ -96,13 +104,16 @@ export interface Appointment {
   type: 'avaliação' | 'consulta' | 'retorno' | 'sessão' | 'acompanhamento';
   value: number;
   paymentStatus: 'pendente' | 'pago' | 'parcial';
-  paymentMethod?: 'pix' | 'cartão de crédito' | 'dinheiro' | 'boleto' | 'transferência';
+  paymentMethod?: 'pix' | 'cartão de crédito' | 'cartão de débito' | 'dinheiro' | 'boleto' | 'transferência' | 'múltiplo';
+  cardInstallments?: number;
   notes?: string;
   isCaseStudy?: boolean;
   linkedToAppointmentId?: string;
   customItemCostsUsed?: { itemId: string; quantity: number }[];
   upfrontPaid?: boolean;
   upfrontPaidAmount?: number;
+  paymentDate?: string;
+  paymentSplits?: PaymentSplit[];
 }
 
 export interface FinancialTransaction {
@@ -115,9 +126,11 @@ export interface FinancialTransaction {
   dueDate: string;
   paymentDate?: string;
   status: 'aberto' | 'pago' | 'pendente' | 'atrasado' | 'cancelado';
-  paymentMethod?: 'pix' | 'cartão de crédito' | 'dinheiro' | 'boleto' | 'transferência';
+  paymentMethod?: 'pix' | 'cartão de crédito' | 'cartão de débito' | 'dinheiro' | 'boleto' | 'transferência' | 'múltiplo';
+  cardInstallments?: number;
   category?: string;
   description?: string;
+  paymentSplits?: PaymentSplit[];
 }
 
 export interface MedicalRecord {
@@ -223,3 +236,22 @@ export interface SupplyExpense {
   date: string;
 }
 
+export interface DoctorNote {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: string;
+  patientId?: string;
+  isDraft: boolean;
+}
+
+export interface BeforeAfterPhoto {
+  id: string;
+  patientId: string;
+  procedureName: string;
+  date: string;
+  beforePhotoUrl: string;
+  afterPhotoUrl: string;
+  notes?: string;
+  createdAt: string;
+}

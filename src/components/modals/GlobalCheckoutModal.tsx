@@ -5,9 +5,10 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { Stethoscope, CheckCircle2, Clock, AlertCircle, DollarSign } from 'lucide-react';
+import { Stethoscope, CheckCircle2, Clock, AlertCircle, DollarSign, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { PaymentSplit } from '../../types';
 
 export function GlobalCheckoutModal() {
   const { 
@@ -26,10 +27,15 @@ export function GlobalCheckoutModal() {
   // Form states inside the checkout process
   const [showCheckoutForm, setShowCheckoutForm] = useState(false);
   const [notes, setNotes] = useState('');
-  const [hasPaid, setHasPaid] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'pix' | 'cartão de crédito' | 'dinheiro' | 'boleto' | 'transferência' | ''>('');
+  const [paymentStatus, setPaymentStatusState] = useState<'pendente' | 'pago' | 'parcial'>('pendente');
+  const [upfrontPaidAmountInput, setUpfrontPaidAmountInput] = useState('');
+  const [paymentDate, setPaymentDate] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'pix' | 'cartão de crédito' | 'cartão de débito' | 'dinheiro' | 'boleto' | 'transferência' | 'múltiplo' | ''>('');
+  const [paymentSplits, setPaymentSplits] = useState<PaymentSplit[]>([]);
   const [paymentAmount, setPaymentAmount] = useState('');
+  const [cardInstallments, setCardInstallments] = useState<number>(1);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [displaySplits, setDisplaySplits] = useState<string[]>([]);
 
   // Custom delay state & confirmation screen state
   const [customDelay, setCustomDelay] = useState('');
@@ -74,8 +80,17 @@ export function GlobalCheckoutModal() {
           maximumFractionDigits: 2,
         }).format(initialVal));
         setNotes('');
-        setHasPaid(found.paymentStatus === 'pago');
-        setPaymentMethod(found.paymentMethod || '');
+        setPaymentStatusState(found.paymentStatus || 'pendente');
+        setUpfrontPaidAmountInput(found.upfrontPaidAmount ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(found.upfrontPaidAmount) : '');
+        setPaymentDate(found.paymentDate || found.date || '');
+        setPaymentMethod(String(found.paymentMethod || '').toLowerCase() as any);
+        setCardInstallments(found.cardInstallments || 1);
+        setPaymentSplits(found.paymentSplits || []);
+        if (found.paymentSplits) {
+          setDisplaySplits(found.paymentSplits.map(s => s.amount ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(s.amount) : ''));
+        } else {
+          setDisplaySplits([]);
+        }
         setShowCheckoutForm(false);
         setValidationError(null);
         setOpen(true);
@@ -102,8 +117,17 @@ export function GlobalCheckoutModal() {
           maximumFractionDigits: 2,
         }).format(initialVal));
         setNotes(app.notes || '');
-        setHasPaid(app.paymentStatus === 'pago');
-        setPaymentMethod(app.paymentMethod || '');
+        setPaymentStatusState(app.paymentStatus || 'pendente');
+        setUpfrontPaidAmountInput(app.upfrontPaidAmount ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(app.upfrontPaidAmount) : '');
+        setPaymentDate(app.paymentDate || app.date || '');
+        setPaymentMethod(String(app.paymentMethod || '').toLowerCase() as any);
+        setCardInstallments(app.cardInstallments || 1);
+        setPaymentSplits(app.paymentSplits || []);
+        if (app.paymentSplits) {
+          setDisplaySplits(app.paymentSplits.map(s => s.amount ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(s.amount) : ''));
+        } else {
+          setDisplaySplits([]);
+        }
         setShowCheckoutForm(false);
         setValidationError(null);
         setPostponeConfirmData(null);
@@ -162,6 +186,38 @@ export function GlobalCheckoutModal() {
     setPaymentAmount(formatted === '0,00' && rawValue === '' ? '' : formatted);
   };
 
+  const handleUpfrontPaidAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawValue = e.target.value.replace(/\D/g, '');
+    const numericValue = Number(rawValue) / 100;
+    
+    if (isNaN(numericValue)) return;
+    
+    const formatted = new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numericValue);
+    
+    setUpfrontPaidAmountInput(formatted === '0,00' && rawValue === '' ? '' : formatted);
+  };
+
+  const handleSplitValueChange = (index: number, valStr: string) => {
+    const rawValue = valStr.replace(/\D/g, '');
+    const numericValue = rawValue === '' ? 0 : Number(rawValue) / 100;
+    if (isNaN(numericValue)) return;
+    
+    const splits = [...paymentSplits];
+    splits[index] = { ...splits[index], amount: numericValue };
+    setPaymentSplits(splits);
+    
+    const newDisplays = [...displaySplits];
+    const formatted = new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numericValue);
+    newDisplays[index] = formatted === '0,00' && rawValue === '' ? '' : formatted;
+    setDisplaySplits(newDisplays);
+  };
+
   const handleCheckoutSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!dueAppointment) return;
@@ -171,20 +227,64 @@ export function GlobalCheckoutModal() {
       return;
     }
 
-    if (hasPaid && !paymentMethod) {
+    if (paymentStatus !== 'pendente' && !paymentMethod) {
       setValidationError('Por favor, selecione a forma de pagamento.');
       return;
     }
 
     const numericAmount = Number(paymentAmount.replace(/\./g, '').replace(',', '.')) || 0;
+    let numericUpfrontPaid = paymentStatus === 'parcial'
+      ? (Number(upfrontPaidAmountInput.replace(/\./g, '').replace(',', '.')) || 0)
+      : (paymentStatus === 'pago' ? numericAmount : 0);
+
+    let finalPaymentStatus = paymentStatus;
+
+    if (paymentMethod === 'múltiplo') {
+      const totalSplits = paymentSplits.reduce((sum, s) => sum + s.amount, 0);
+      if (Math.abs(totalSplits - numericAmount) > 0.01) {
+        setValidationError('A soma das formas de pagamento deve ser igual ao valor cobrado (R$ ' + numericAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + ').');
+        return;
+      }
+      if (paymentSplits.length === 0) {
+        setValidationError('Por favor, adicione pelo menos uma forma de pagamento para divisão.');
+        return;
+      }
+
+      const allPaid = paymentSplits.every(s => s.status === 'pago');
+      const allPending = paymentSplits.every(s => s.status === 'pendente');
+      finalPaymentStatus = allPaid ? 'pago' : (allPending ? 'pendente' : 'parcial');
+      numericUpfrontPaid = paymentSplits.filter(s => s.status === 'pago').reduce((sum, s) => sum + s.amount, 0);
+    } else {
+      if (paymentStatus === 'parcial') {
+        if (numericUpfrontPaid <= 0) {
+          setValidationError('Por favor, informe um valor pago parcialmente válido.');
+          return;
+        }
+        if (numericUpfrontPaid >= numericAmount) {
+          setValidationError('O valor pago parcialmente deve ser menor que o valor total cobrado. Caso tenha sido pago por completo, escolha "Pago Inteiro".');
+          return;
+        }
+      }
+    }
+
+    const normalizedPaymentMethod = paymentMethod === 'pix' ? 'Pix' :
+                                    paymentMethod === 'cartão de crédito' ? 'Cartão de Crédito' :
+                                    paymentMethod === 'cartão de débito' ? 'Cartão de Débito' :
+                                    paymentMethod === 'dinheiro' ? 'Dinheiro' :
+                                    paymentMethod === 'boleto' ? 'Boleto' : paymentMethod;
 
     // Update appointment as completed/realizado, saving notes and payment info
     updateAppointment(dueAppointment.id, {
       status: 'realizado',
       notes: notes.trim(),
-      paymentStatus: hasPaid ? 'pago' : 'pendente',
-      paymentMethod: hasPaid && paymentMethod ? (paymentMethod as any) : undefined,
-      value: numericAmount
+      paymentStatus: finalPaymentStatus,
+      paymentMethod: paymentMethod === 'múltiplo' ? 'múltiplo' : (paymentStatus !== 'pendente' && paymentMethod ? (normalizedPaymentMethod as any) : undefined),
+      cardInstallments: paymentMethod !== 'múltiplo' && paymentStatus !== 'pendente' && paymentMethod === 'cartão de crédito' ? cardInstallments : undefined,
+      value: numericAmount,
+      upfrontPaid: numericUpfrontPaid > 0,
+      upfrontPaidAmount: numericUpfrontPaid,
+      paymentDate: paymentStatus !== 'pendente' ? (paymentDate || dueAppointment.date) : undefined,
+      paymentSplits: paymentMethod === 'múltiplo' ? paymentSplits : undefined
     });
 
     removePostponedCheckout(dueAppointment.id); // clear countdown timer
@@ -197,6 +297,8 @@ export function GlobalCheckoutModal() {
 
   const patient = dueAppointment ? patients.find(p => p.id === dueAppointment.patientId) : null;
   const service = dueAppointment ? services.find(s => s.id === dueAppointment.serviceId) : null;
+
+  const numericAmount = Number(paymentAmount.replace(/\./g, '').replace(',', '.')) || 0;
 
   return (
     <Dialog open={open} onOpenChange={(val) => {
@@ -352,23 +454,22 @@ export function GlobalCheckoutModal() {
                   />
                 </div>
 
-                {/* Payment Toggle */}
-                <div className="flex items-center justify-between p-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl select-none">
-                  <div className="space-y-0.5">
-                    <span className="text-indigo-950 font-black text-xs uppercase italic tracking-wide block">O paciente pagou agora?</span>
-                    <span className="text-[10px] text-indigo-700 font-medium leading-normal block">Selecione para registrar a entrada financeira.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    id="modalPaymentPaid"
-                    checked={hasPaid}
-                    onChange={e => setHasPaid(e.target.checked)}
-                    className="w-5 h-5 text-indigo-600 border-indigo-300 rounded focus:ring-indigo-500 cursor-pointer"
-                  />
+                {/* Payment Selector */}
+                <div className="space-y-2">
+                  <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Status do Pagamento</Label>
+                  <select
+                    value={paymentStatus}
+                    onChange={e => setPaymentStatusState(e.target.value as any)}
+                    className="h-11 w-full border border-slate-200 bg-white font-bold text-xs rounded-xl px-3 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    <option value="pendente">Aguardando Pagamento</option>
+                    <option value="pago">Pago Inteiro</option>
+                    <option value="parcial">Pago Parcialmente</option>
+                  </select>
                 </div>
 
                 {/* Payment Fields (Conditional) */}
-                {hasPaid && (
+                {paymentStatus !== 'pendente' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50/50 p-4 border border-slate-100 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-200">
                     <div className="space-y-2">
                       <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider flex items-center gap-1">
@@ -386,18 +487,254 @@ export function GlobalCheckoutModal() {
 
                     <div className="space-y-2">
                       <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Forma de Pagamento</Label>
-                      <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                        <SelectTrigger className="h-11 border-slate-200 bg-white font-bold text-xs rounded-xl">
-                          <SelectValue placeholder="Selecione..." />
-                        </SelectTrigger>
-                        <SelectContent className="z-[5000]">
-                          <SelectItem value="pix" className="italic font-bold">Pix</SelectItem>
-                          <SelectItem value="cartão de crédito" className="italic font-bold">Cartão de Crédito</SelectItem>
-                          <SelectItem value="dinheiro" className="italic font-bold">Dinheiro</SelectItem>
-                          <SelectItem value="boleto" className="italic font-bold">Boleto</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <select
+                        value={paymentMethod}
+                        onChange={e => {
+                          const v = e.target.value;
+                          if (v === 'múltiplo' && (!paymentSplits || paymentSplits.length === 0)) {
+                            setPaymentMethod('múltiplo');
+                            setPaymentSplits([
+                              { method: 'pix', amount: numericAmount, status: 'pago', paymentDate: paymentDate || (dueAppointment ? dueAppointment.date : '') }
+                            ]);
+                          } else {
+                            setPaymentMethod(v as any);
+                          }
+                        }}
+                        className="h-11 w-full border border-slate-200 bg-white font-bold text-xs rounded-xl px-3 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                      >
+                        <option value="">Selecione...</option>
+                        <option value="pix">Pix</option>
+                        <option value="cartão de crédito">Cartão de Crédito</option>
+                        <option value="cartão de débito">Cartão de Débito</option>
+                        <option value="dinheiro">Dinheiro</option>
+                        <option value="boleto">Boleto</option>
+                        <option value="múltiplo">Múltiplas Formas (Dividir)</option>
+                      </select>
                     </div>
+
+                    {paymentMethod !== 'múltiplo' && paymentStatus === 'parcial' && (
+                      <div className="space-y-2 md:col-span-2 animate-in fade-in duration-200">
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider flex items-center gap-1">
+                          <DollarSign className="w-3.5 h-3.5 text-indigo-500" /> Valor Pago Parcialmente (R$)
+                        </Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">R$</span>
+                          <Input
+                            className="h-11 border-slate-200 bg-white pl-8 text-sm font-black italic rounded-xl"
+                            value={upfrontPaidAmountInput}
+                            onChange={handleUpfrontPaidAmountChange}
+                            placeholder="0,00"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {paymentMethod !== 'múltiplo' && paymentMethod === 'cartão de crédito' && (
+                      <div className="space-y-2 md:col-span-2 animate-in fade-in duration-200">
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Número de Parcelas</Label>
+                        <select
+                          value={cardInstallments}
+                          onChange={e => setCardInstallments(Number(e.target.value))}
+                          className="h-11 w-full border border-slate-200 bg-white font-bold text-xs rounded-xl px-3 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                        >
+                          {[...Array(12)].map((_, i) => (
+                            <option key={i + 1} value={i + 1}>{i + 1}x</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {paymentMethod !== 'múltiplo' && (
+                      <div className="space-y-2 md:col-span-2">
+                        <Label className="text-slate-700 font-bold italic text-xs uppercase tracking-wider">Data do Pagamento</Label>
+                        <Input
+                          type="date"
+                          className="h-11 border-slate-200 bg-white font-bold rounded-xl"
+                          value={paymentDate || (dueAppointment ? dueAppointment.date : '')}
+                          onChange={e => setPaymentDate(e.target.value)}
+                        />
+                      </div>
+                    )}
+
+                    {paymentMethod === 'múltiplo' && (
+                      <div className="md:col-span-2 space-y-4 bg-indigo-50/20 p-4 rounded-2xl border border-indigo-100/50 animate-in fade-in duration-200 w-full font-sans text-xs">
+                        <div className="flex justify-between items-center">
+                          <Label className="text-indigo-900 font-extrabold italic text-xs uppercase tracking-wider">Formas de Pagamento</Label>
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="bg-indigo-650 hover:bg-indigo-700 text-white font-bold text-[10px] uppercase rounded-xl h-8 cursor-pointer border-none"
+                            onClick={() => {
+                              const currentTotal = paymentSplits.reduce((sum, s) => sum + s.amount, 0);
+                              const remaining = Math.max(0, numericAmount - currentTotal);
+                              setPaymentSplits([
+                                ...paymentSplits,
+                                { method: 'pix', amount: remaining, status: 'pago', paymentDate: paymentDate || (dueAppointment ? dueAppointment.date : '') }
+                              ]);
+                              setDisplaySplits([
+                                ...displaySplits,
+                                remaining === 0 ? '' : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(remaining)
+                              ]);
+                            }}
+                          >
+                            + Adicionar Forma
+                          </Button>
+                        </div>
+
+                        <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
+                          {paymentSplits.map((split, index) => (
+                            <div key={index} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-2.5">
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-[9px] text-slate-400 font-bold uppercase mb-0.5 block">Forma</label>
+                                  <select
+                                    value={split.method}
+                                    onChange={(e) => {
+                                      const splits = [...paymentSplits];
+                                      splits[index] = { ...split, method: e.target.value as any };
+                                      setPaymentSplits(splits);
+                                    }}
+                                    className="h-9 w-full border border-slate-200 bg-white font-bold text-xs rounded-lg px-2 outline-none"
+                                  >
+                                    <option value="pix">Pix</option>
+                                    <option value="cartão de crédito">Cartão de Crédito</option>
+                                    <option value="cartão de débito">Cartão de Débito</option>
+                                    <option value="dinheiro">Dinheiro</option>
+                                    <option value="boleto">Boleto</option>
+                                    <option value="transferência">Transferência</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="text-[9px] text-slate-400 font-bold uppercase mb-0.5 block">Valor (R$)</label>
+                                  <div className="relative">
+                                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 font-mono">R$</span>
+                                    <Input
+                                      type="text"
+                                      placeholder="0,00"
+                                      className="pl-7 h-9 border-slate-200 text-xs font-bold w-full rounded-lg bg-white font-mono"
+                                      value={displaySplits[index] || ''}
+                                      onChange={(e) => handleSplitValueChange(index, e.target.value)}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2 items-center">
+                                <div>
+                                  <label className="text-[9px] text-slate-400 font-bold uppercase mb-0.5 block">Status</label>
+                                  <select
+                                    value={split.status}
+                                    onChange={(e) => {
+                                      const splits = [...paymentSplits];
+                                      splits[index] = { ...split, status: e.target.value as any };
+                                      setPaymentSplits(splits);
+                                    }}
+                                    className="h-9 w-full border border-slate-200 bg-white font-bold text-xs rounded-lg px-2 outline-none"
+                                  >
+                                    <option value="pago">Pago</option>
+                                    <option value="pendente">Pendente</option>
+                                  </select>
+                                </div>
+
+                                {split.method === 'cartão de crédito' ? (
+                                  <div>
+                                    <label className="text-[9px] text-slate-400 font-bold uppercase mb-0.5 block">Parcelas</label>
+                                    <select
+                                      value={split.installments || 1}
+                                      onChange={(e) => {
+                                        const splits = [...paymentSplits];
+                                        splits[index] = { ...split, installments: Number(e.target.value) };
+                                        setPaymentSplits(splits);
+                                      }}
+                                      className="h-9 w-full border border-slate-200 bg-white font-bold text-xs rounded-lg px-2 outline-none"
+                                    >
+                                      {[...Array(12)].map((_, i) => (
+                                        <option key={i + 1} value={i + 1}>{i + 1}x</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ) : (
+                                  split.status === 'pago' && (
+                                    <div>
+                                      <label className="text-[9px] text-slate-400 font-bold uppercase mb-0.5 block">Data Pagto.</label>
+                                      <Input
+                                        type="date"
+                                        className="h-9 border-slate-200 text-xs font-bold w-full rounded-lg"
+                                        value={split.paymentDate || (dueAppointment ? dueAppointment.date : '')}
+                                        onChange={(e) => {
+                                          const splits = [...paymentSplits];
+                                          splits[index] = { ...split, paymentDate: e.target.value };
+                                          setPaymentSplits(splits);
+                                        }}
+                                      />
+                                    </div>
+                                  )
+                                )}
+                              </div>
+
+                              {split.method === 'cartão de crédito' && split.status === 'pago' && (
+                                <div>
+                                  <label className="text-[9px] text-slate-400 font-bold uppercase mb-0.5 block">Data Pagto.</label>
+                                  <Input
+                                    type="date"
+                                    className="h-9 border-slate-200 text-xs font-bold w-full rounded-lg"
+                                    value={split.paymentDate || (dueAppointment ? dueAppointment.date : '')}
+                                    onChange={(e) => {
+                                      const splits = [...paymentSplits];
+                                      splits[index] = { ...split, paymentDate: e.target.value };
+                                      setPaymentSplits(splits);
+                                    }}
+                                  />
+                                </div>
+                              )}
+
+                              <div className="flex justify-end pt-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  className="h-7 px-2.5 text-red-500 hover:text-red-750 hover:bg-red-50 text-[10px] font-bold rounded-lg cursor-pointer flex items-center gap-1"
+                                  onClick={() => {
+                                    setPaymentSplits(paymentSplits.filter((_, i) => i !== index));
+                                    setDisplaySplits(displaySplits.filter((_, i) => i !== index));
+                                  }}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" /> Remover
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+
+                          {paymentSplits.length === 0 && (
+                            <p className="text-slate-400 font-bold text-xs italic text-center py-2">Nenhuma forma de pagamento adicionada.</p>
+                          )}
+                        </div>
+
+                        {/* Summary of split values */}
+                        {(() => {
+                          const totalSplits = paymentSplits.reduce((sum, s) => sum + s.amount, 0);
+                          const totalPaid = paymentSplits.filter(s => s.status === 'pago').reduce((sum, s) => sum + s.amount, 0);
+                          const matchesTotal = Math.abs(totalSplits - numericAmount) < 0.01;
+
+                          return (
+                            <div className="pt-3 border-t border-indigo-100 flex flex-col gap-2 font-sans text-xs">
+                              <div className="flex flex-wrap justify-between gap-2">
+                                <span className="text-slate-500 font-bold">Lançado: R$ {totalSplits.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                <span className="text-green-600 font-bold">Pago: R$ {totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                              </div>
+                              <div className="flex justify-between items-center pt-1 border-t border-slate-100/50">
+                                <span className="font-extrabold text-[10px] uppercase text-indigo-700">Total Cobrado: R$ {numericAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                <span className={`px-2 py-0.5 rounded-full font-black text-[9px] uppercase border tracking-wider ${
+                                  matchesTotal ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200 animate-pulse"
+                                }`}>
+                                  {matchesTotal ? 'Valores Fecham' : `Diferença: R$ ${(numericAmount - totalSplits).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
                   </div>
                 )}
 
