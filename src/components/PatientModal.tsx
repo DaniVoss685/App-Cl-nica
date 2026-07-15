@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Dialog, 
   DialogContent, 
@@ -22,6 +22,8 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
+  Download,
+  Trash2,
   ShieldAlert,
   Package,
   Sparkles,
@@ -33,6 +35,7 @@ import { Badge } from './ui/badge';
 import { Card } from './ui/card';
 import { cn } from '../lib/utils';
 import { FinanceModal } from './FinanceModal';
+import { ClinicalRecordWorkspace } from './ClinicalRecordWorkspace';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { 
@@ -112,7 +115,8 @@ const referralOptions = [
 ];
 
 export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, initialTab }: PatientModalProps) {
-  const { patients, appointments, services, professionals, addPatient, updatePatient, removePatient, medicalRecords, addMedicalRecord, finance, budgets, doctorNotes, beforeAfterPhotos } = useStore();
+  const { patients, appointments, services, professionals, addPatient, updatePatient, removePatient, medicalRecords, addMedicalRecord, finance, budgets, doctorNotes, beforeAfterPhotos, documents, removeDocument, productMode } = useStore();
+  const isFinanceOnly = productMode === 'financeiro';
   const patient = patients.find(p => p.id === patientId);
   
   const patientNotes = patientId ? (doctorNotes || []).filter(n => n.patientId === patientId) : [];
@@ -120,6 +124,10 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
   
   // Cálculos dinâmicos e reais do paciente para evitar dados mocados
   const patientFinance = patient ? finance.filter(f => f.patientId === patient.id && f.type === 'receita') : [];
+  const patientDocuments = patient ? (documents || []).filter(doc => doc.patientId === patient.id) : [];
+  const patientFiscalDocuments = patientDocuments
+    .filter(doc => doc.fiscalDocumentType === 'nota_fiscal' || doc.fiscalDocumentType === 'recibo' || doc.type === 'nota_fiscal' || doc.type === 'recibo')
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   const totalPaid = patientFinance.filter(f => f.status === 'pago').reduce((sum, f) => sum + f.amount, 0);
   const totalUnpaid = patientFinance.filter(f => f.status === 'pendente').reduce((sum, f) => sum + f.amount, 0);
   const paidTransactionsCount = patientFinance.filter(f => f.status === 'pago').length;
@@ -167,12 +175,25 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
   const [savedPatientId, setSavedPatientId] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
   const [clinicalSubTab, setClinicalSubTab] = useState<'evolucao' | 'rascunhos' | 'fotos'>('evolucao');
+  const [fiscalDocumentPeriodMode, setFiscalDocumentPeriodMode] = useState<'todos' | 'dia' | 'mes' | 'ano'>('todos');
+  const [fiscalDocumentPeriodValue, setFiscalDocumentPeriodValue] = useState('');
+
+  const filteredPatientFiscalDocuments = useMemo(() => {
+    if (fiscalDocumentPeriodMode === 'todos' || !fiscalDocumentPeriodValue) return patientFiscalDocuments;
+
+    return patientFiscalDocuments.filter((doc) => {
+      const docDate = String(doc.date || '');
+      if (fiscalDocumentPeriodMode === 'dia') return docDate === fiscalDocumentPeriodValue;
+      if (fiscalDocumentPeriodMode === 'mes') return docDate.startsWith(fiscalDocumentPeriodValue);
+      return docDate.slice(0, 4) === fiscalDocumentPeriodValue;
+    });
+  }, [patientFiscalDocuments, fiscalDocumentPeriodMode, fiscalDocumentPeriodValue]);
 
   useEffect(() => {
     if (isOpen) {
-      setActiveTab(initialTab || 'overview');
+      setActiveTab(isFinanceOnly && initialTab && !['overview', 'financial', 'docs'].includes(initialTab) ? 'overview' : (initialTab || 'overview'));
     }
-  }, [isOpen, initialTab]);
+  }, [isOpen, initialTab, isFinanceOnly]);
 
   useEffect(() => {
     if (isOpen && patient) {
@@ -207,7 +228,7 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
   useEffect(() => {
     if (isOpen) {
       setCurrentStep(1);
-      setActiveTab('overview');
+      setActiveTab(isFinanceOnly && initialTab && !['overview', 'financial', 'docs'].includes(initialTab) ? 'overview' : (initialTab || 'overview'));
       if (!patientId) {
         setNewPatientData({
           name: '',
@@ -295,7 +316,7 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
 
   const handleSaveNew = () => {
     if (isNewPatientStep1Invalid) return;
-    const generatedId = Math.random().toString();
+    const generatedId = crypto.randomUUID();
     addPatient({ ...newPatientData, id: generatedId });
     setSavedPatientId(generatedId);
     setSavedPatientName(newPatientData.name);
@@ -805,10 +826,12 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
                   <TabsList className="h-16 bg-transparent gap-2 p-1">
                     {[
                       { id: 'overview', label: 'Resumo', icon: History },
-                      { id: 'clinical', label: 'Prontuário', icon: FileText },
+                      ...(!isFinanceOnly ? [{ id: 'clinical', label: 'Prontuário', icon: FileText }] : []),
                       { id: 'financial', label: 'Financeiro', icon: DollarSign },
-                      { id: 'docs', label: 'Documentos', icon: Camera },
-                      { id: 'settings', label: 'Gestão', icon: User },
+                      { id: 'docs', label: 'Documentos', icon: FileText },
+                      ...(!isFinanceOnly ? [
+                        { id: 'settings', label: 'Gestão', icon: User },
+                      ] : []),
                     ].map(tab => (
                       <TabsTrigger 
                         key={tab.id}
@@ -820,13 +843,15 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
                       </TabsTrigger>
                     ))}
                   </TabsList>
-                  <Button 
-                    onClick={() => setIsNewInteractionModalOpen(true)}
-                    className="h-10 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-[10px] shadow-lg shadow-indigo-100 flex-shrink-0 ml-4 italic uppercase px-6"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Nova Interação
-                  </Button>
+                  {!isFinanceOnly && (
+                    <Button
+                      onClick={() => setIsNewInteractionModalOpen(true)}
+                      className="h-10 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-[10px] shadow-lg shadow-indigo-100 flex-shrink-0 ml-4 italic uppercase px-6"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Nova Interação
+                    </Button>
+                  )}
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-8 no-scrollbar scroll-smooth">
@@ -887,6 +912,9 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
                   </TabsContent>
 
                   <TabsContent value="clinical" className="m-0 space-y-6">
+                    <ClinicalRecordWorkspace patientId={patientId} embedded initialTab="evolucoes" />
+                    {false && (
+                    <>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
                       {/* Clinical Subtabs */}
                       <div className="flex gap-1 p-0.5 bg-slate-150 rounded-xl select-none max-w-sm">
@@ -1052,6 +1080,8 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
                         )}
                       </div>
                     )}
+                    </>
+                    )}
                   </TabsContent>
 
                   <TabsContent value="financial" className="m-0">
@@ -1123,14 +1153,122 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
                     </div>
                   </TabsContent>
 
-                  <TabsContent value="docs" className="m-0">
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                        {[1, 2, 3, 4, 5].map(i => (
-                          <div key={i} className="aspect-square bg-white border-2 border-dashed border-slate-100 rounded-3xl flex flex-col items-center justify-center group hover:border-indigo-400 hover:bg-indigo-50/30 transition-all cursor-pointer">
-                            <Camera className="w-8 h-8 text-slate-200 group-hover:text-indigo-400 mb-2 transition-colors" />
-                            <span className="text-[10px] font-black text-slate-300 group-hover:text-indigo-400 transition-colors italic uppercase">Upload Foto</span>
+                  <TabsContent value="docs" className="m-0 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-black italic text-slate-950">Documentos fiscais</h3>
+                        <p className="text-[11px] font-bold text-slate-500">Notas fiscais e recibos anexados nos lançamentos de receita.</p>
+                      </div>
+                      <Badge className="w-fit border-none bg-indigo-50 text-indigo-700 font-black">
+                        {filteredPatientFiscalDocuments.length} arquivo{filteredPatientFiscalDocuments.length === 1 ? '' : 's'}
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2 rounded-2xl border border-slate-150 bg-white p-3 sm:grid-cols-[180px_1fr_auto]">
+                      <select
+                        value={fiscalDocumentPeriodMode}
+                        onChange={event => {
+                          setFiscalDocumentPeriodMode(event.target.value as any);
+                          setFiscalDocumentPeriodValue('');
+                        }}
+                        className="h-10 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-black text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="todos">Todo periodo</option>
+                        <option value="dia">Filtrar por dia</option>
+                        <option value="mes">Filtrar por mes</option>
+                        <option value="ano">Filtrar por ano</option>
+                      </select>
+                      <Input
+                        type={fiscalDocumentPeriodMode === 'dia' ? 'date' : fiscalDocumentPeriodMode === 'mes' ? 'month' : fiscalDocumentPeriodMode === 'ano' ? 'number' : 'text'}
+                        value={fiscalDocumentPeriodValue}
+                        min={fiscalDocumentPeriodMode === 'ano' ? '1900' : undefined}
+                        max={fiscalDocumentPeriodMode === 'ano' ? '2100' : undefined}
+                        disabled={fiscalDocumentPeriodMode === 'todos'}
+                        onChange={event => setFiscalDocumentPeriodValue(event.target.value)}
+                        placeholder={fiscalDocumentPeriodMode === 'ano' ? '2026' : 'Selecione o periodo'}
+                        className="h-10 rounded-xl text-xs font-bold disabled:bg-slate-100"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 rounded-xl text-xs font-bold"
+                        onClick={() => {
+                          setFiscalDocumentPeriodMode('todos');
+                          setFiscalDocumentPeriodValue('');
+                        }}
+                      >
+                        Limpar
+                      </Button>
+                    </div>
+
+                    <div className="space-y-3">
+                      {filteredPatientFiscalDocuments.map(doc => {
+                        const typeLabel = doc.fiscalDocumentType === 'nota_fiscal' || doc.type === 'nota_fiscal' ? 'Nota fiscal' : 'Recibo';
+                        return (
+                          <div key={doc.id} className="rounded-2xl border border-slate-150 bg-white p-4 shadow-sm">
+                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                              <div className="min-w-0 flex items-start gap-3">
+                                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
+                                  <FileText className="h-5 w-5" />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black text-slate-950">{doc.name}</p>
+                                  <p className="mt-1 text-[10px] font-bold text-slate-500">
+                                    {typeLabel}
+                                    {doc.fiscalDocumentNumber ? ` · Nº ${doc.fiscalDocumentNumber}` : ''}
+                                    {doc.amount ? ` · R$ ${doc.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                                  </p>
+                                  <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                    {doc.date ? format(new Date(doc.date + 'T12:00:00'), 'dd/MM/yyyy') : 'Sem data'} · {doc.category || 'Receita'}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                {doc.url && (
+                                  <>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      className="h-9 rounded-xl text-xs font-bold"
+                                      onClick={() => window.open(doc.url, '_blank')}
+                                    >
+                                      <ExternalLink className="mr-2 h-4 w-4" />
+                                      Abrir
+                                    </Button>
+                                    <a
+                                      href={doc.url}
+                                      download={`${doc.name}.pdf`}
+                                      className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                                    >
+                                      <Download className="mr-2 h-4 w-4" />
+                                      Baixar
+                                    </a>
+                                  </>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  className="h-9 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50"
+                                  onClick={() => removeDocument(doc.id)}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Excluir
+                                </Button>
+                              </div>
+                            </div>
                           </div>
-                        ))}
+                        );
+                      })}
+
+                      {filteredPatientFiscalDocuments.length === 0 && (
+                        <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-10 text-center">
+                          <FileText className="mx-auto h-10 w-10 text-slate-300" />
+                          <p className="mt-3 text-sm font-black italic text-slate-800">Nenhum documento fiscal anexado</p>
+                          <p className="mx-auto mt-1 max-w-md text-xs font-bold text-slate-400">
+                            Ao lançar uma nova receita com nota fiscal ou recibo, anexe o PDF para ele aparecer automaticamente aqui.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </TabsContent>
 

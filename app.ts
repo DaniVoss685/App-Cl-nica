@@ -276,4 +276,73 @@ app.post("/api/jarvis/query", async (req, res) => {
   }
 });
 
+app.post("/api/carne-legal-chat", async (req, res) => {
+  const { question } = req.body || {};
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!question || typeof question !== "string") {
+    return res.status(400).json({ error: "missing_question", message: "Informe uma pergunta." });
+  }
+
+  if (!apiKey) {
+    return res.status(503).json({
+      error: "missing_api_key",
+      message: "Ambiente não configurado para IA. Adicione GEMINI_API_KEY no .env."
+    });
+  }
+
+  const receitaContext = `
+Fontes oficiais Receita Federal usadas como base:
+1. Tabela IRPF 2025, atualizada em 27/04/2026:
+- A partir de maio/2025: isento até R$ 2.428,80; 7,5% com dedução R$ 182,16; 15% com dedução R$ 394,16; 22,5% com dedução R$ 675,49; 27,5% com dedução R$ 908,73.
+- Dedução mensal por dependente: R$ 189,59. Limite mensal de desconto simplificado: R$ 607,20.
+
+2. Deduções Carnê-Leão, Receita Federal:
+- Podem ser deduzidos contribuição previdenciária oficial, dependentes, pensão alimentícia judicial/escritura pública e Livro Caixa.
+- Livro Caixa: receitas e despesas da prestação de serviços sem vínculo empregatício.
+- Despesas dedutíveis em Livro Caixa: remuneração de terceiros com vínculo e encargos, emolumentos pagos a terceiros e despesas de custeio necessárias à percepção da receita e à manutenção da fonte produtora.
+- A dedução mensal de Livro Caixa é limitada ao rendimento recebido no mês; excesso pode ir para meses seguintes até dezembro.
+- Despesa de custeio indispensável pode incluir aluguel de sala comercial, água, luz, telefone, material de expediente/consumo e contratação de pessoal.
+- Locomoção, combustível, estacionamento, manutenção de veículo, seguro e IPVA não são dedutíveis, exceto regra específica de representante comercial autônomo.
+- Tíquetes de caixa, recibos não identificados e similares não comprovam despesas de Livro Caixa.
+- Leasing e depreciação de bens não são dedutíveis.
+- Em imóvel residencial-profissional, pode-se deduzir um quinto de despesas como aluguel, energia, água, gás, taxas, impostos, telefone e condomínio quando não for possível comprovar a parte profissional.
+- Consertos, manutenção e reforma de imóvel próprio não são dedutíveis.
+- Benfeitorias em imóvel alugado podem ser dedutíveis se forem compensação contratual do aluguel, escrituradas e comprovadas.
+- Publicações e roupas especiais necessárias à atividade, contribuições a conselhos/sindicatos, pagamentos a terceiros, propaganda ligada à atividade e congressos/seminários necessários podem ser dedutíveis se escriturados e comprovados.
+
+3. Rendimentos Carnê-Leão, Receita Federal:
+- Honorários recebidos de pessoa física por profissional autônomo estão sujeitos ao Carnê-Leão.
+- Despesas comuns podem ser rateadas se escrituradas em Livro Caixa e comprovadas.
+- Se a prestação de serviços de terceiros se tornar sistemática/habitual e o profissional recebe em nome próprio o total pago e paga os demais, pode haver equiparação à pessoa jurídica.
+- Rendimentos de pessoa jurídica não estão sujeitos ao pagamento do Carnê-Leão, embora despesas de Livro Caixa possam ser informadas conforme a regra aplicável.
+`;
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      systemInstruction: `
+Você é um assistente fiscal de apoio para uma clínica, especializado em dúvidas operacionais sobre Carnê-Leão e Livro Caixa.
+Responda em português do Brasil, com tom claro e direto.
+Use exclusivamente o contexto da Receita Federal fornecido abaixo. Se a pergunta depender de detalhe fora do contexto, diga que precisa validar com a contabilidade/Receita.
+Não invente regra fiscal. Diferencie "em geral pode", "em geral não pode" e "depende de comprovação/atividade".
+Sempre termine com uma linha "Fonte: Receita Federal - Carnê-Leão/Livro Caixa.".
+
+${receitaContext}
+`
+    });
+
+    const result = await model.generateContent(question.slice(0, 2000));
+    const response = await result.response;
+    res.json({ text: response.text() });
+  } catch (error: any) {
+    console.error("[Carne Legal Chat] Error:", error);
+    res.status(500).json({
+      error: "ai_failure",
+      message: "Não foi possível consultar a IA fiscal agora."
+    });
+  }
+});
+
 export default app;

@@ -178,6 +178,7 @@ function ChatWindow({ chat }: { chat: WaChat }) {
     mediaType: 'image' | 'audio' | 'video' | 'document';
   }[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [showFinishModal, setShowFinishModal] = useState(false);
 
   const addFilesToPending = async (filesList: FileList) => {
     const newPending: typeof pendingFiles = [];
@@ -640,7 +641,7 @@ function ChatWindow({ chat }: { chat: WaChat }) {
 
   const handleFinish = () => {
     setChatStatus(chat.id, 'finalizado');
-    toast.success('Atendimento finalizado.');
+    setShowFinishModal(true);
   };
 
   // Group messages by date
@@ -673,9 +674,6 @@ function ChatWindow({ chat }: { chat: WaChat }) {
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="text-slate-400 h-8 w-8"><Phone className="w-4 h-4" /></Button>
-          <Button variant="ghost" size="icon" className="text-slate-400 h-8 w-8"><Video className="w-4 h-4" /></Button>
-          <div className="w-px h-4 bg-slate-100 mx-0.5" />
           <Button
             onClick={handleFinish}
             size="sm"
@@ -992,6 +990,34 @@ function ChatWindow({ chat }: { chat: WaChat }) {
           </>
         )}
       </div>
+
+      {/* Modal de Finalização de Atendimento */}
+      <AnimatePresence>
+        {showFinishModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-[2px] flex items-center justify-center z-[9999] p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-150"
+            >
+              <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
+                <CheckCircle2 className="w-7 h-7" />
+              </div>
+              <h3 className="text-base font-black text-slate-900 italic uppercase tracking-wider mb-2">Atendimento Encerrado</h3>
+              <p className="text-xs text-slate-500 mb-6 leading-relaxed">
+                O atendimento com o paciente foi encerrado com sucesso e removido da lista ativa.
+              </p>
+              <Button 
+                onClick={() => setShowFinishModal(false)}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-10 rounded-xl shadow-lg shadow-emerald-600/10 active:scale-95 transition-all"
+              >
+                Entendido
+              </Button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1126,16 +1152,17 @@ function ContactsTab({ onStartChat }: { onStartChat: (chat: WaChat) => void }) {
   );
 }
 
-// ─── Tab: Em Fila ──────────────────────────────────────────────────────────────
 function FilaTab({ onAttend }: { onAttend: (chat: WaChat) => void }) {
-  const { whatsappChats, chatStatuses, setChatStatus } = useStore();
+  const { whatsappChats, chatStatuses, setChatStatus, setMultipleChatStatuses } = useStore();
   const [search, setSearch] = useState('');
 
-  // Chats in queue = status 'fila' OR (no status + has unread messages)
+  // Chats in queue = status 'fila' OR (not in attendance/finished AND (unread messages OR lastMessage from patient))
   const queueChats = useMemo(() => {
     return whatsappChats.filter(c => {
       const st = chatStatuses[c.id];
-      return st === 'fila' || (!st && c.unreadCount > 0);
+      if (st === 'atendimento' || st === 'finalizado') return false;
+      const hasIncoming = c.unreadCount > 0 || (c.lastMessage && !c.lastMessageFromMe);
+      return st === 'fila' || hasIncoming;
     });
   }, [whatsappChats, chatStatuses]);
 
@@ -1154,6 +1181,13 @@ function FilaTab({ onAttend }: { onAttend: (chat: WaChat) => void }) {
     setChatStatus(chatId, 'finalizado');
   };
 
+  const handleClearAll = () => {
+    const ids = filtered.map(c => c.id);
+    if (ids.length === 0) return;
+    setMultipleChatStatuses(ids, 'finalizado');
+    toast.success('Fila de atendimento limpa com sucesso!');
+  };
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <div className="p-4 border-b border-slate-100 space-y-3 shrink-0">
@@ -1162,6 +1196,18 @@ function FilaTab({ onAttend }: { onAttend: (chat: WaChat) => void }) {
             <h3 className="font-black italic text-slate-800 uppercase tracking-wide text-sm">Em Fila</h3>
             <p className="text-xs text-slate-400">{filtered.length} contato{filtered.length !== 1 ? 's' : ''} aguardando</p>
           </div>
+          {filtered.length > 0 && (
+            <Button
+              onClick={handleClearAll}
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs font-bold border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 rounded-xl px-3 flex items-center gap-1.5 active:scale-95 transition-all shadow-sm"
+              title="Limpar todos os contatos da fila"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Limpar Todos
+            </Button>
+          )}
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -1238,7 +1284,12 @@ function AtendimentoTab({ initialChat }: { initialChat: WaChat | null }) {
     if (initialChat) setSelectedId(initialChat.id);
   }, [initialChat]);
 
-  const selectedChat = whatsappChats.find(c => c.id === selectedId) ?? null;
+  const selectedChat = useMemo(() => {
+    const found = whatsappChats.find(c => c.id === selectedId);
+    if (!found) return null;
+    if (chatStatuses[found.id] !== 'atendimento') return null;
+    return found;
+  }, [whatsappChats, selectedId, chatStatuses]);
 
   return (
     <div className="flex flex-1 overflow-hidden">
@@ -1607,7 +1658,12 @@ export function WhatsApp() {
 
   // Counts
   const filaCount = useMemo(() =>
-    whatsappChats.filter(c => chatStatuses[c.id] === 'fila' || (!chatStatuses[c.id] && c.unreadCount > 0)).length,
+    whatsappChats.filter(c => {
+      const st = chatStatuses[c.id];
+      if (st === 'atendimento' || st === 'finalizado') return false;
+      const hasIncoming = c.unreadCount > 0 || (c.lastMessage && !c.lastMessageFromMe);
+      return st === 'fila' || hasIncoming;
+    }).length,
     [whatsappChats, chatStatuses]
   );
   const atendimentoCount = useMemo(() =>

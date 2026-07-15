@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store';
 import { cn } from '../lib/utils';
+import { inventoryConsumptionUnitCost } from '../lib/costing';
 
 interface ServiceModalProps {
   isOpen: boolean;
@@ -590,7 +591,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
                       {inventory.map(item => {
                         const isPack = item.unit === 'pacote' && item.unitsPerPackage && item.unitsPerPackage > 1;
                         const unitLabel = isPack ? `${item.unit} de ${item.unitsPerPackage} ${item.subUnitName || 'un'}` : item.unit;
-                        const subCost = isPack ? (item.unitCost / item.unitsPerPackage) : item.unitCost;
+                        const subCost = inventoryConsumptionUnitCost(item);
                         return (
                           <SelectItem key={item.id} value={item.id} className="font-bold text-xs py-2.5 cursor-pointer hover:bg-indigo-550/15 transition-all text-slate-800">
                             {item.name} ({unitLabel}) - R$ {subCost.toFixed(2)} / {isPack ? (item.subUnitName || 'un') : (item.unit || 'un')}
@@ -628,7 +629,7 @@ export function ServiceModal({ isOpen, onClose, serviceId }: ServiceModalProps) 
                     const invItem = inventory.find(i => i.id === ic.itemId);
                     const isPack = invItem?.unit === 'pacote' && invItem?.unitsPerPackage && invItem.unitsPerPackage > 1;
                     const consumedUnit = isPack ? (invItem?.subUnitName || 'un') : (invItem?.unit || 'un');
-                    const subCost = isPack ? ((invItem?.unitCost || 0) / (invItem?.unitsPerPackage || 1)) : (invItem?.unitCost || 0);
+                    const subCost = inventoryConsumptionUnitCost(invItem);
                     const totalCost = subCost * ic.quantity;
 
                     return (

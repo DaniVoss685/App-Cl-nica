@@ -1,4 +1,4 @@
-import { LayoutDashboard, CalendarDays, Users, Stethoscope, Package, Clock, DollarSign, Sparkles, PieChart, Users2, Settings, HelpCircle, Target, FileText, ClipboardList, ChevronLeft, ChevronRight, MessageSquare, Calculator, Globe, CheckSquare } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Users, Stethoscope, Package, Clock, DollarSign, Sparkles, PieChart, UserCog, Settings, HelpCircle, Target, FileText, ClipboardList, ChevronLeft, ChevronRight, MessageSquare, Calculator, Globe, CheckSquare } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { useStore } from '../../store';
@@ -28,7 +28,7 @@ const operacaoNavigation = [
 
 const gestaoNavigation = [
   { name: 'Relatórios', href: '/financeiro?tab=graficos', icon: PieChart },
-  { name: 'Equipe', href: '/equipe', icon: Users2 },
+  { name: 'Equipe', href: '/equipe', icon: UserCog },
   { name: 'Testes e Tutoriais', href: '/testes', icon: ClipboardList, color: 'text-amber-500' },
   { name: 'Configurações', href: '/configuracoes', icon: Settings },
   { name: 'Guia de Implantação', href: '/guia', icon: HelpCircle },
@@ -95,6 +95,7 @@ export function Sidebar() {
   const { pathname, search } = useLocation();
   const clinicName = useStore(state => state.clinicName);
   const currentUser = useStore(state => state.currentUser);
+  const getAllowedNavigation = useStore(state => state.getAllowedNavigation);
   const insights = useStore(state => state.insights);
   const appointments = useStore(state => state.appointments);
   const unresolvedInsights = insights.filter(i => !i.resolved).length;
@@ -121,6 +122,8 @@ export function Sidebar() {
 
   const checkPermission = (itemName: string) => {
     if (!currentUser) return false;
+    const allowedNavigation = getAllowedNavigation();
+    if (!allowedNavigation.includes('*') && !allowedNavigation.includes(itemName)) return false;
     if (currentUser.role === 'admin') return true;
     
     const normalizedName = itemName.toLowerCase().trim();

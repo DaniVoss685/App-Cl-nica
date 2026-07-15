@@ -71,8 +71,19 @@ export function Dashboard() {
     const totalAppointments = filteredAppointments.length;
     const uniquePatients = new Set(filteredAppointments.map(a => a.patientId)).size;
     
-    // Simple revenue sum from appointments in period
-    const revenue = filteredAppointments.reduce((acc, current) => acc + (current.value || 0), 0);
+    // Revenue sum from paid finance receipts for the period
+    const revenue = (finance || [])
+      .filter(f => {
+        if (f.type !== 'receita' || f.status !== 'pago') return false;
+        const dateStr = f.paymentDate || f.dueDate;
+        if (!dateStr) return false;
+        const [year, month, day] = dateStr.split('-');
+        const matchYear = year === selectedYear;
+        const matchMonth = selectedMonth === 'todos' || month === selectedMonth;
+        const matchDay = selectedDay === 'todos' || day === selectedDay.padStart(2, '0');
+        return matchYear && matchMonth && matchDay;
+      })
+      .reduce((sum, f) => sum + f.amount, 0);
     
     // Dynamic Ocupação Médica
     const daysCount = selectedDay !== 'todos' ? 1 : (selectedMonth !== 'todos' ? 22 : 22 * 12);
@@ -86,7 +97,7 @@ export function Dashboard() {
       revenue,
       medicalOccupation
     };
-  }, [filteredAppointments, professionals, selectedMonth, selectedDay]);
+  }, [filteredAppointments, professionals, selectedMonth, selectedDay, selectedYear, finance]);
 
   const monthlyRevenueData = useMemo(() => {
     const result = [];
@@ -102,7 +113,9 @@ export function Dashboard() {
       const totalRevenue = (finance || [])
         .filter(f => {
           if (f.type !== 'receita' || f.status !== 'pago') return false;
-          const [year, month] = f.dueDate.split('-');
+          const dateStr = f.paymentDate || f.dueDate;
+          if (!dateStr) return false;
+          const [year, month] = dateStr.split('-');
           return year === yearStr && month === monthStr;
         })
         .reduce((sum, f) => sum + f.amount, 0);
@@ -803,7 +816,7 @@ export function Dashboard() {
       {(() => {
         // Encontrar pacientes que possuem transações pendentes no financeiro
         const patientsWithDebts = patients.map(p => {
-          const pendingTxs = finance.filter(f => f.patientId === p.id && f.type === 'receita' && f.status === 'pendente');
+          const pendingTxs = finance.filter(f => f.patientId === p.id && f.type === 'receita' && f.status !== 'pago' && f.status !== 'cancelado');
           const totalPending = pendingTxs.reduce((sum, f) => sum + f.amount, 0);
           
           // Encontrar transações vencidas (dueDate < hoje)

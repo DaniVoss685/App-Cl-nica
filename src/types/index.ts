@@ -46,6 +46,7 @@ export interface Service {
   generatesFollowUp: boolean;
   followUpDays?: number;
   itemCosts?: { itemId: string; quantity: number }[];
+  targetMarginPercent?: number;
   professionalIds?: string[];
   requiresUpfrontPayment?: boolean;
   upfrontPaymentType?: 'porcentagem' | 'valor';
@@ -63,6 +64,27 @@ export interface InventoryItem {
   minQuantity?: number;
   unitsPerPackage?: number;
   subUnitName?: string;
+  totalMeasure?: number;
+  consumptionUnit?: string;
+  supplier?: string;
+  batchNumber?: string;
+  expirationDate?: string;
+}
+
+export interface InventoryPurchase {
+  id: string;
+  itemId: string;
+  itemName: string;
+  purchaseDate: string;
+  supplier?: string;
+  batchNumber?: string;
+  invoiceNumber?: string;
+  expirationDate?: string;
+  quantity: number;
+  totalCost: number;
+  unitCostAtPurchase: number;
+  stockQuantityBefore: number;
+  stockQuantityAfter: number;
 }
 
 export interface Package {
@@ -119,6 +141,7 @@ export interface Appointment {
 export interface FinancialTransaction {
   id: string;
   patientId?: string;
+  professionalId?: string;
   appointmentId?: string;
   packageId?: string;
   type: 'receita' | 'despesa';
@@ -131,26 +154,53 @@ export interface FinancialTransaction {
   category?: string;
   description?: string;
   paymentSplits?: PaymentSplit[];
+  fiscalDocumentType?: 'nota_fiscal' | 'recibo' | 'nenhum';
+  fiscalDocumentNumber?: string;
+  fiscalDocumentDate?: string;
+  isDeductible?: boolean;
+  deductibleCategoryId?: string;
+  supplierName?: string;
+  supplierDocument?: string;
+  taxEntity?: 'pessoa_fisica' | 'pessoa_juridica';
+  fiscalAttachmentName?: string;
+  fiscalAttachmentUrl?: string;
+}
+
+export type ProductMode = 'full' | 'financeiro';
+
+export interface DeductibleCategory {
+  id: string;
+  name: string;
+  active: boolean;
+  description?: string;
 }
 
 export interface MedicalRecord {
   id: string;
   patientId: string;
-  professionalId: string;
+  professionalId?: string;
   appointmentId?: string;
   date: string;
   content: string;
   type: 'evolução' | 'avaliação' | 'prescrição' | 'exame';
+  convertedFromNoteId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Document {
   id: string;
   patientId: string;
   name: string;
-  type: 'termo de consentimento' | 'contrato' | 'receituário' | 'atestado' | 'outro';
+  type: 'termo de consentimento' | 'contrato' | 'receituário' | 'atestado' | 'nota_fiscal' | 'recibo' | 'outro';
   date: string;
   url?: string;
   status: 'assinado' | 'pendente' | 'gerado';
+  financialTransactionId?: string;
+  fiscalDocumentType?: 'nota_fiscal' | 'recibo' | 'nenhum';
+  fiscalDocumentNumber?: string;
+  amount?: number;
+  category?: string;
 }
 
 export interface AIInsightTask {
@@ -227,9 +277,14 @@ export interface FileItem {
 
 export interface SupplyExpense {
   id: string;
+  appointmentId?: string;
+  serviceId?: string;
+  patientId?: string;
   itemId: string;
   itemName: string;
   quantityUsed: number;
+  stockQuantityDelta?: number;
+  movementType?: 'consumo' | 'estorno' | 'manual';
   serviceName: string;
   patientName: string;
   totalCost: number;
@@ -241,17 +296,24 @@ export interface DoctorNote {
   title: string;
   content: string;
   createdAt: string;
+  updatedAt?: string;
   patientId?: string;
+  professionalId?: string;
   isDraft: boolean;
+  convertedToRecordId?: string;
 }
 
 export interface BeforeAfterPhoto {
   id: string;
   patientId: string;
+  professionalId?: string;
   procedureName: string;
   date: string;
   beforePhotoUrl: string;
   afterPhotoUrl: string;
+  beforePhotoPath?: string;
+  afterPhotoPath?: string;
   notes?: string;
   createdAt: string;
+  updatedAt?: string;
 }

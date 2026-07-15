@@ -10,11 +10,40 @@ import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { PaymentSplit } from '../../types';
 
+type UpfrontPaymentConfig = {
+  requiresUpfrontPayment?: boolean;
+  upfrontPaymentType?: 'porcentagem' | 'valor';
+  upfrontPaymentValue?: number;
+  name?: string;
+};
+
+const formatBRL = (value: number) => new Intl.NumberFormat('pt-BR', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+}).format(value);
+
+const getUpfrontRequirement = (item: UpfrontPaymentConfig | undefined, totalValue: number) => {
+  if (!item?.requiresUpfrontPayment) return null;
+
+  const rawValue = Number(item.upfrontPaymentValue || 0);
+  const amount = item.upfrontPaymentType === 'valor'
+    ? rawValue
+    : (totalValue * rawValue) / 100;
+
+  return {
+    sourceName: item.name || 'item selecionado',
+    type: item.upfrontPaymentType || 'porcentagem',
+    value: rawValue,
+    amount: Math.max(0, amount)
+  };
+};
+
 export function GlobalCheckoutModal() {
   const { 
     appointments, 
     patients, 
     services, 
+    packages,
     updateAppointment, 
     postponedCheckouts, 
     setPostponedCheckout, 
@@ -36,6 +65,7 @@ export function GlobalCheckoutModal() {
   const [cardInstallments, setCardInstallments] = useState<number>(1);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [displaySplits, setDisplaySplits] = useState<string[]>([]);
+  const [upfrontDecision, setUpfrontDecision] = useState<'pago' | 'pendente' | ''>('');
 
   // Custom delay state & confirmation screen state
   const [customDelay, setCustomDelay] = useState('');
@@ -93,6 +123,7 @@ export function GlobalCheckoutModal() {
         }
         setShowCheckoutForm(false);
         setValidationError(null);
+        setUpfrontDecision(found.upfrontPaid || found.upfrontPaidAmount ? 'pago' : '');
         setOpen(true);
       }
     };
@@ -130,6 +161,7 @@ export function GlobalCheckoutModal() {
         }
         setShowCheckoutForm(false);
         setValidationError(null);
+        setUpfrontDecision(app.upfrontPaid || app.upfrontPaidAmount ? 'pago' : '');
         setPostponeConfirmData(null);
         setOpen(true);
       }
@@ -218,6 +250,43 @@ export function GlobalCheckoutModal() {
     setDisplaySplits(newDisplays);
   };
 
+  const getAppointmentUpfrontRequirement = (appointment: any) => {
+    if (!appointment) return null;
+    const appointmentService = services.find(s => s.id === appointment.serviceId);
+    const appointmentPackage = packages.find(p => p.id === appointment.packageId);
+    const upfrontItem = appointmentService?.requiresUpfrontPayment
+      ? appointmentService
+      : appointmentPackage?.requiresUpfrontPayment
+        ? appointmentPackage
+        : appointmentService || appointmentPackage;
+
+    return getUpfrontRequirement(
+      upfrontItem,
+      Number(paymentAmount.replace(/\./g, '').replace(',', '.')) || appointment.value || 0
+    );
+  };
+
+  const markCheckoutUpfrontPaid = () => {
+    const requirement = getAppointmentUpfrontRequirement(dueAppointment);
+    if (!requirement || !dueAppointment) return;
+
+    const totalAmount = Number(paymentAmount.replace(/\./g, '').replace(',', '.')) || dueAppointment.value || 0;
+    const amount = Math.min(requirement.amount, totalAmount || requirement.amount);
+
+    setUpfrontDecision('pago');
+    setPaymentStatusState(amount >= totalAmount ? 'pago' : 'parcial');
+    setUpfrontPaidAmountInput(formatBRL(amount));
+    setPaymentDate(prev => prev || dueAppointment.date || format(new Date(), 'yyyy-MM-dd'));
+  };
+
+  const markCheckoutUpfrontPending = () => {
+    setUpfrontDecision('pendente');
+    setUpfrontPaidAmountInput('');
+    if (paymentStatus === 'parcial') {
+      setPaymentStatusState('pendente');
+    }
+  };
+
   const handleCheckoutSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!dueAppointment) return;
@@ -233,6 +302,13 @@ export function GlobalCheckoutModal() {
     }
 
     const numericAmount = Number(paymentAmount.replace(/\./g, '').replace(',', '.')) || 0;
+    const upfrontRequirement = getAppointmentUpfrontRequirement(dueAppointment);
+
+    if (upfrontRequirement && !upfrontDecision) {
+      setValidationError('Este atendimento exige caucao/sinal. Informe se o pagamento antecipado foi pago ou ficou pendente antes de finalizar.');
+      return;
+    }
+
     let numericUpfrontPaid = paymentStatus === 'parcial'
       ? (Number(upfrontPaidAmountInput.replace(/\./g, '').replace(',', '.')) || 0)
       : (paymentStatus === 'pago' ? numericAmount : 0);
@@ -267,6 +343,11 @@ export function GlobalCheckoutModal() {
       }
     }
 
+    if (upfrontRequirement && upfrontDecision === 'pago' && numericUpfrontPaid + 0.01 < Math.min(upfrontRequirement.amount, numericAmount || upfrontRequirement.amount)) {
+      setValidationError('O valor pago como caucao/sinal esta abaixo do valor configurado para este pacote ou procedimento.');
+      return;
+    }
+
     const normalizedPaymentMethod = paymentMethod === 'pix' ? 'Pix' :
                                     paymentMethod === 'cartão de crédito' ? 'Cartão de Crédito' :
                                     paymentMethod === 'cartão de débito' ? 'Cartão de Débito' :
@@ -297,6 +378,8 @@ export function GlobalCheckoutModal() {
 
   const patient = dueAppointment ? patients.find(p => p.id === dueAppointment.patientId) : null;
   const service = dueAppointment ? services.find(s => s.id === dueAppointment.serviceId) : null;
+  const pkg = dueAppointment ? packages.find(p => p.id === dueAppointment.packageId) : null;
+  const upfrontRequirement = dueAppointment ? getAppointmentUpfrontRequirement(dueAppointment) : null;
 
   const numericAmount = Number(paymentAmount.replace(/\./g, '').replace(',', '.')) || 0;
 
@@ -362,7 +445,7 @@ export function GlobalCheckoutModal() {
                     </div>
                     <div>
                       <p className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">Procedimento</p>
-                      <p className="text-slate-700 font-bold text-xs truncate capitalize">{service?.name || dueAppointment.type}</p>
+                      <p className="text-slate-700 font-bold text-xs truncate capitalize">{service?.name || pkg?.name || dueAppointment.type}</p>
                     </div>
                   </div>
 
@@ -373,6 +456,20 @@ export function GlobalCheckoutModal() {
                     <span>Horário agendado: {dueAppointment.startTime} às {dueAppointment.endTime}</span>
                   </div>
                 </div>
+
+                {upfrontRequirement && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-black text-amber-900 uppercase italic tracking-wider">
+                        Baixa de caucao obrigatoria
+                      </p>
+                      <p className="text-xs text-amber-800 font-semibold leading-snug mt-1">
+                        {upfrontRequirement.sourceName} exige sinal de R$ {formatBRL(upfrontRequirement.amount)}. Ao finalizar, confirme se foi pago ou ficou pendente.
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 <p className="text-xs text-slate-500 leading-normal text-center px-4 font-medium">
                   O horário programado terminou. O procedimento foi concluído com sucesso ou o paciente ainda está em atendimento?
@@ -453,6 +550,49 @@ export function GlobalCheckoutModal() {
                     onChange={e => setNotes(e.target.value)}
                   />
                 </div>
+
+                {upfrontRequirement && (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-3">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-black text-amber-900 uppercase italic tracking-wider">
+                          Confirmar caucao/sinal
+                        </p>
+                        <p className="text-xs text-amber-800 font-semibold leading-snug mt-1">
+                          Valor esperado: R$ {formatBRL(upfrontRequirement.amount)}
+                          {upfrontRequirement.type === 'porcentagem' ? ` (${upfrontRequirement.value}% do valor)` : ' (valor fixo)'}.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        onClick={markCheckoutUpfrontPaid}
+                        className={`h-10 rounded-xl text-[10px] font-black uppercase italic ${
+                          upfrontDecision === 'pago'
+                            ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                            : 'bg-white hover:bg-amber-100 text-amber-800 border border-amber-200'
+                        }`}
+                      >
+                        Foi pago
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={markCheckoutUpfrontPending}
+                        className={`h-10 rounded-xl text-[10px] font-black uppercase italic ${
+                          upfrontDecision === 'pendente'
+                            ? 'bg-slate-900 hover:bg-slate-800 text-white border-slate-900'
+                            : 'border-amber-200 text-amber-800 hover:bg-amber-100'
+                        }`}
+                      >
+                        Nao foi pago
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Payment Selector */}
                 <div className="space-y-2">

@@ -4,6 +4,8 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://fbkouuvupdyffi
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZia291dXZ1cGR5ZmZpendvaXRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyOTI2NDUsImV4cCI6MjA3MDg2ODY0NX0.9xN5BQug6yHm_k9H20v524XFuCbd1JzW2aRSQJWstfo';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const clinicalPhotosBucket = import.meta.env.VITE_SUPABASE_CLINICAL_BUCKET || 'clinical-photos';
+export const fiscalDocumentsBucket = import.meta.env.VITE_SUPABASE_FISCAL_BUCKET || 'fiscal-documents';
 
 // Helper para mapear propriedades do Frontend para o Supabase (camelCase -> snake_case)
 export function toSnakeCase(obj: any): any {

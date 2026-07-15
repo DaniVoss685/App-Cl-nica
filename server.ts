@@ -1,9 +1,15 @@
 import path from "path";
+import express from "express";
 import { createServer as createViteServer } from "vite";
 import app from "./app";
 
+// Força o ambiente de desenvolvimento localmente se não for produção explicitamente
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = "development";
+}
+
 async function startServer() {
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

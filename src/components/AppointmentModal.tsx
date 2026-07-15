@@ -9,7 +9,58 @@ import { Calendar as CalendarIcon, Clock, UserCheck, AlertTriangle, Users, Steth
 import { format, addDays, addMinutes } from 'date-fns';
 import { useStore } from '../store';
 import { cn } from '../lib/utils';
-import { Appointment } from '../types';
+import { Appointment, PaymentSplit } from '../types';
+
+type UpfrontPaymentConfig = {
+  requiresUpfrontPayment?: boolean;
+  upfrontPaymentType?: 'porcentagem' | 'valor';
+  upfrontPaymentValue?: number;
+  name?: string;
+};
+
+type AppointmentFormData = {
+  patientId: string;
+  professionalId: string;
+  serviceId: string;
+  packageId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  type: Appointment['type'];
+  confirmationStatus: Appointment['confirmationStatus'];
+  value?: number;
+  paymentStatus: Appointment['paymentStatus'];
+  paymentMethod: Appointment['paymentMethod'] | '';
+  notes: string;
+  isCaseStudy: boolean;
+  status: Appointment['status'];
+  upfrontPaid: boolean;
+  upfrontPaidAmount: number;
+  cardInstallments: number;
+  paymentDate: string;
+  paymentSplits: PaymentSplit[];
+};
+
+const formatBRL = (value: number) => new Intl.NumberFormat('pt-BR', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+}).format(value);
+
+const getUpfrontRequirement = (item: UpfrontPaymentConfig | undefined, totalValue: number) => {
+  if (!item?.requiresUpfrontPayment) return null;
+
+  const rawValue = Number(item.upfrontPaymentValue || 0);
+  const amount = item.upfrontPaymentType === 'valor'
+    ? rawValue
+    : (totalValue * rawValue) / 100;
+
+  return {
+    sourceName: item.name || 'item selecionado',
+    type: item.upfrontPaymentType || 'porcentagem',
+    value: rawValue,
+    amount: Math.max(0, amount)
+  };
+};
 
 interface AppointmentModalProps {
   open: boolean;
@@ -31,7 +82,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
   const originalService = originalAppt ? services.find(s => s.id === originalAppt.serviceId) : null;
   const originalProfessional = originalAppt ? professionals.find(p => p.id === originalAppt.professionalId) : null;
   
-  const getInitialData = () => {
+  const getInitialData = (): AppointmentFormData => {
     if (appointmentId) {
       const appt = appointments.find(a => a.id === appointmentId);
       if (appt) {
@@ -43,18 +94,19 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
           date: appt.date || '',
           startTime: appt.startTime || '',
           endTime: appt.endTime || '',
-          type: appt.type || 'consulta',
-          confirmationStatus: appt.confirmationStatus || 'pendente',
+          type: (appt.type || 'consulta') as Appointment['type'],
+          confirmationStatus: (appt.confirmationStatus || 'pendente') as Appointment['confirmationStatus'],
           value: appt.value,
-          paymentStatus: appt.paymentStatus || 'pendente',
-          paymentMethod: appt.paymentMethod || '',
+          paymentStatus: (appt.paymentStatus || 'pendente') as Appointment['paymentStatus'],
+          paymentMethod: (appt.paymentMethod || '') as AppointmentFormData['paymentMethod'],
           notes: appt.notes || '',
           isCaseStudy: appt.isCaseStudy || false,
-          status: appt.status || 'agendado',
+          status: (appt.status || 'agendado') as Appointment['status'],
           upfrontPaid: appt.upfrontPaid || false,
           upfrontPaidAmount: appt.upfrontPaidAmount || 0,
           cardInstallments: appt.cardInstallments || 1,
-          paymentDate: appt.paymentDate || ''
+          paymentDate: appt.paymentDate || '',
+          paymentSplits: appt.paymentSplits || []
         };
       }
     }
@@ -77,11 +129,12 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
       upfrontPaid: false,
       upfrontPaidAmount: 0,
       cardInstallments: 1,
-      paymentDate: ''
+      paymentDate: '',
+      paymentSplits: [] as PaymentSplit[]
     };
   };
 
-  const [formData, setFormData] = useState(getInitialData());
+  const [formData, setFormData] = useState<AppointmentFormData>(getInitialData());
   const [bulkSchedule, setBulkSchedule] = useState(false);
   const [displayValue, setDisplayValue] = useState('');
   const [displayUpfrontPaidValue, setDisplayUpfrontPaidValue] = useState('');
@@ -180,6 +233,33 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
     
     setDisplayUpfrontPaidValue(formatted === '0,00' && rawValue === '' ? '' : formatted);
   };
+
+  const markUpfrontPaymentPaid = (amount: number) => {
+    const safeAmount = Math.min(Math.max(amount, 0), formData.value || amount);
+    const isFullPayment = safeAmount >= (formData.value || 0);
+
+    setFormData({
+      ...formData,
+      upfrontPaid: safeAmount > 0,
+      upfrontPaidAmount: safeAmount,
+      paymentStatus: (isFullPayment ? 'pago' : 'parcial') as any,
+      paymentDate: formData.paymentDate || formData.date
+    });
+    setIsPaymentRecorded(true);
+    setDisplayUpfrontPaidValue(safeAmount > 0 ? formatBRL(safeAmount) : '');
+  };
+
+  const markUpfrontPaymentPending = () => {
+    setFormData({
+      ...formData,
+      upfrontPaid: false,
+      upfrontPaidAmount: 0,
+      paymentStatus: 'pendente',
+      paymentMethod: '',
+      paymentDate: ''
+    });
+    setDisplayUpfrontPaidValue('');
+  };
   
   const handleSplitValueChange = (index: number, valStr: string) => {
     const rawValue = valStr.replace(/\D/g, '');
@@ -220,8 +300,11 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
       serviceId,
       packageId: 'none',
       value: newValue,
-      endTime: newEndTime
+      endTime: newEndTime,
+      upfrontPaid: false,
+      upfrontPaidAmount: 0
     });
+    setDisplayUpfrontPaidValue('');
 
     if (newValue !== undefined) {
       setDisplayValue(new Intl.NumberFormat('pt-BR', {
@@ -239,8 +322,11 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
         packageId,
         serviceId: 'none',
         value: selectedPackage.price,
+        upfrontPaid: false,
+        upfrontPaidAmount: 0,
         type: 'sessão'
       });
+      setDisplayUpfrontPaidValue('');
       setDisplayValue(new Intl.NumberFormat('pt-BR', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
@@ -719,6 +805,52 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                         </p>
                       </div>
                     </div>
+
+                    {(() => {
+                      const selectedService = services.find(s => s.id === formData.serviceId);
+                      const selectedPackage = packages.find(p => p.id === formData.packageId);
+                      const requirement = getUpfrontRequirement(
+                        formData.serviceId !== 'none' ? selectedService : selectedPackage,
+                        formData.value || 0
+                      );
+
+                      if (!requirement) return null;
+
+                      return (
+                        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col gap-3">
+                          <div className="flex items-start gap-3">
+                            <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="text-xs font-black text-amber-900 uppercase italic tracking-wider">
+                                Este {formData.packageId !== 'none' ? 'pacote' : 'procedimento'} exige pagamento antecipado
+                              </p>
+                              <p className="text-xs text-amber-800 font-semibold leading-snug mt-1">
+                                {requirement.sourceName}: caucao/sinal de R$ {formatBRL(requirement.amount)}
+                                {requirement.type === 'porcentagem' ? ` (${requirement.value}% do valor)` : ' (valor fixo)'}.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <Button
+                              type="button"
+                              onClick={() => markUpfrontPaymentPaid(requirement.amount)}
+                              className="h-10 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[10px] font-black uppercase italic"
+                            >
+                              Paciente ja pagou
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={markUpfrontPaymentPending}
+                              className="h-10 border-amber-200 text-amber-800 hover:bg-amber-100 rounded-xl text-[10px] font-black uppercase italic"
+                            >
+                              Ainda pendente
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* PASSO 3: Agenda & Horários */}
@@ -931,6 +1063,51 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                         </Select>
                       </div>
                     </div>
+                    {(() => {
+                      const selectedService = services.find(s => s.id === formData.serviceId);
+                      const selectedPackage = packages.find(p => p.id === formData.packageId);
+                      const requirement = getUpfrontRequirement(
+                        formData.serviceId !== 'none' ? selectedService : selectedPackage,
+                        formData.value || 0
+                      );
+
+                      if (!requirement) return null;
+
+                      return (
+                        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col gap-3">
+                          <div className="flex items-start gap-3">
+                            <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="text-xs font-black text-amber-900 uppercase italic tracking-wider">
+                                Este {formData.packageId !== 'none' ? 'pacote' : 'procedimento'} exige pagamento antecipado
+                              </p>
+                              <p className="text-xs text-amber-800 font-semibold leading-snug mt-1">
+                                {requirement.sourceName}: caucao/sinal de R$ {formatBRL(requirement.amount)}
+                                {requirement.type === 'porcentagem' ? ` (${requirement.value}% do valor)` : ' (valor fixo)'}.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <Button
+                              type="button"
+                              onClick={() => markUpfrontPaymentPaid(requirement.amount)}
+                              className="h-10 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[10px] font-black uppercase italic"
+                            >
+                              Paciente ja pagou
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={markUpfrontPaymentPending}
+                              className="h-10 border-amber-200 text-amber-800 hover:bg-amber-100 rounded-xl text-[10px] font-black uppercase italic"
+                            >
+                              Ainda pendente
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* PASSO 3: Agenda & Horários */}
@@ -1317,30 +1494,12 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                     {(() => {
                       const selectedService = services.find(s => s.id === formData.serviceId);
                       const selectedPackage = packages.find(p => p.id === formData.packageId);
+                      const requirement = getUpfrontRequirement(
+                        formData.serviceId !== 'none' ? selectedService : selectedPackage,
+                        formData.value || 0
+                      );
 
-                      const hasUpfrontRequirement = 
-                        (formData.serviceId !== 'none' && selectedService?.requiresUpfrontPayment) ||
-                        (formData.packageId !== 'none' && selectedPackage?.requiresUpfrontPayment);
-
-                      if (!hasUpfrontRequirement) return null;
-
-                      const upfrontType = 
-                        formData.serviceId !== 'none' && selectedService?.requiresUpfrontPayment 
-                          ? selectedService.upfrontPaymentType 
-                          : selectedPackage?.requiresUpfrontPayment 
-                            ? selectedPackage.upfrontPaymentType 
-                            : 'porcentagem';
-
-                      const upfrontValue = 
-                        formData.serviceId !== 'none' && selectedService?.requiresUpfrontPayment 
-                          ? selectedService.upfrontPaymentValue 
-                          : selectedPackage?.requiresUpfrontPayment 
-                            ? selectedPackage.upfrontPaymentValue 
-                            : 0;
-
-                      const calculatedAmount = upfrontType === 'porcentagem'
-                        ? ((formData.value || 0) * upfrontValue) / 100
-                        : upfrontValue;
+                      if (!requirement) return null;
 
                       return (
                         <div className="p-5 bg-amber-50 rounded-2xl border border-amber-200/80 space-y-4 animate-fadeIn">
@@ -1352,13 +1511,13 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                           </div>
                           
                           <p className="text-xs text-amber-700 leading-snug font-medium">
-                            Este item requer garantia {upfrontType === 'porcentagem' ? `${upfrontValue}% do total` : `R$ ${upfrontValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} fixo`}.
+                            Este item requer garantia {requirement.type === 'porcentagem' ? `${requirement.value}% do total` : `R$ ${formatBRL(requirement.value)} fixo`}.
                           </p>
 
                           <div className="flex justify-between items-center py-2 border-y border-amber-200/50 font-sans">
                             <span className="text-xs font-bold text-amber-800 uppercase italic">Valor do Sinal Estimado:</span>
                             <span className="text-base font-black text-amber-950 font-mono">
-                              R$ {calculatedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              R$ {formatBRL(requirement.amount)}
                             </span>
                           </div>
 
@@ -1367,7 +1526,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                             <div className="flex bg-white rounded-xl border border-amber-200 p-1 shadow-sm">
                               <button
                                 type="button"
-                                onClick={() => setFormData(prev => ({ ...prev, upfrontPaid: true, upfrontPaidAmount: calculatedAmount }))}
+                                onClick={() => markUpfrontPaymentPaid(requirement.amount)}
                                 className={cn(
                                   "flex-1 py-1 px-3 font-semibold text-[10px] uppercase italic rounded-lg transition-all cursor-pointer",
                                   formData.upfrontPaid ? "bg-amber-600 text-white shadow-sm font-black" : "text-amber-700 hover:bg-slate-50"
@@ -1377,7 +1536,7 @@ export function AppointmentModal({ open, onOpenChange, appointmentId, initialDat
                               </button>
                               <button
                                 type="button"
-                                onClick={() => setFormData(prev => ({ ...prev, upfrontPaid: false, upfrontPaidAmount: 0 }))}
+                                onClick={markUpfrontPaymentPending}
                                 className={cn(
                                   "flex-1 py-1 px-3 font-semibold text-[10px] uppercase italic rounded-lg transition-all cursor-pointer",
                                   !formData.upfrontPaid ? "bg-slate-200 text-slate-700 font-black" : "text-amber-700 hover:bg-slate-50"
