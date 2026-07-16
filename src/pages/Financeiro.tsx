@@ -62,6 +62,14 @@ import {
   DropdownMenuTrigger
 } from '../components/ui/dropdown-menu';
 import { FinanceModal } from '../components/FinanceModal';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter
+} from '../components/ui/dialog';
 import { cn } from '../lib/utils';
 import { readFinanceAuditEntries } from '../lib/financeAudit';
 
@@ -1003,6 +1011,7 @@ export function Financeiro() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
   const [modalDefaultType, setModalDefaultType] = useState<'receita' | 'despesa'>('receita');
+  const [transactionToDelete, setTransactionToDelete] = useState<FinancialTransaction | null>(null);
   const [showDeductibleHelp, setShowDeductibleHelp] = useState(false);
   const [financeCategoryState, setFinanceCategoryState] = useState<FinanceCategoryState>(() => loadFinanceCategoryState());
   const [deductibleCategoryDraft, setDeductibleCategoryDraft] = useState('');
@@ -1408,6 +1417,8 @@ export function Financeiro() {
   const simulatedTax = calculateMonthlyIrpf(carneLeaoReport.taxableBase + simulationBaseDelta);
   const simulationTaxDelta = simulatedTax.tax - carneLeaoReport.estimatedTax;
   const simulationNetImpact = simulationRevenue - simulationExpense - simulationTaxDelta;
+  const simulatedRevenueTotal = carneLeaoReport.totalRevenue + simulationRevenue;
+  const simulatedDeductionTotal = carneLeaoReport.totalDeductible + simulationExpense;
 
   const fiscalPendingByPatient = useMemo(() => {
     const byPatient = new Map<string, { id: string; name: string; count: number; total: number; missingDocument: number; missingProof: number }>();
@@ -1806,10 +1817,7 @@ export function Financeiro() {
   };
 
   const deleteTransaction = (tx: FinancialTransaction) => {
-    if (!window.confirm('Deseja realmente excluir este lançamento?')) return;
-    removeFinance(tx.id);
-    setFinanceAuditEntries(readFinanceAuditEntries());
-    toast.error('Lançamento excluído.');
+    setTransactionToDelete(tx);
   };
 
   const toggleCarneClosingItem = (itemId: string) => {
@@ -3315,6 +3323,7 @@ export function Financeiro() {
                     draft: simulationRevenuePercentDraft,
                     base: whatIfReference.monthlyRevenue,
                     amount: simulationPercentRevenue,
+                    simulatedLabel: 'Receita simulada',
                     tone: 'emerald'
                   },
                   {
@@ -3325,10 +3334,14 @@ export function Financeiro() {
                     draft: simulationExpensePercentDraft,
                     base: whatIfReference.monthlyExpense,
                     amount: simulationPercentExpense,
+                    simulatedLabel: 'Despesa simulada',
                     tone: 'rose'
                   }
                 ].map(control => (
-                  <div key={control.label} className="rounded-2xl border border-white bg-white p-4 shadow-sm">
+                  <div key={control.label} className={cn(
+                    "rounded-3xl border bg-white p-5 shadow-sm transition-all",
+                    control.tone === 'emerald' ? 'border-emerald-100 hover:shadow-emerald-100/70' : 'border-rose-100 hover:shadow-rose-100/70'
+                  )}>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{control.label}</p>
@@ -3348,10 +3361,27 @@ export function Financeiro() {
                         <span className="text-xs font-black text-slate-400">%</span>
                       </div>
                     </div>
-                    <div className="mt-4">
-                      <div className="relative h-8">
-                        <div className="absolute left-0 right-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-slate-100" />
-                        <div className="absolute left-1/2 top-1/2 h-5 w-px -translate-y-1/2 bg-slate-300" />
+                    <div className="mt-5">
+                      <div className="relative h-12">
+                        <div className="absolute left-0 right-0 top-1/2 h-3 -translate-y-1/2 rounded-full bg-slate-100 shadow-inner" />
+                        <div
+                          className={cn(
+                            "absolute top-1/2 h-3 -translate-y-1/2 rounded-full",
+                            control.tone === 'emerald' ? 'bg-emerald-500' : 'bg-rose-500'
+                          )}
+                          style={{
+                            left: `${Math.min(50, (control.value + 100) / 2)}%`,
+                            right: `${100 - Math.max(50, (control.value + 100) / 2)}%`
+                          }}
+                        />
+                        <div className="absolute left-1/2 top-1/2 h-7 w-px -translate-y-1/2 bg-slate-300" />
+                        <div
+                          className={cn(
+                            "pointer-events-none absolute top-1/2 h-7 w-7 -translate-y-1/2 rounded-full border-4 border-white shadow-xl",
+                            control.tone === 'emerald' ? 'bg-emerald-600 shadow-emerald-200' : 'bg-rose-600 shadow-rose-200'
+                          )}
+                          style={{ left: `calc(${(control.value + 100) / 2}% - 14px)` }}
+                        />
                         <input
                           type="range"
                           min={-100}
@@ -3359,16 +3389,16 @@ export function Financeiro() {
                           step={1}
                           value={control.value}
                           onChange={event => setSimulationPercentFromSlider(control.kind, Number(event.target.value))}
-                          className={cn('relative z-10 h-8 w-full cursor-pointer bg-transparent', control.tone === 'emerald' ? 'accent-emerald-600' : 'accent-rose-600')}
+                          className="absolute inset-0 z-10 h-12 w-full cursor-pointer opacity-0"
                         />
                       </div>
-                      <div className="mt-2 flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      <div className="flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
                         <span>-100%</span>
                         <span>0%</span>
                         <span>+100%</span>
                       </div>
                     </div>
-                    <div className="mt-4 grid grid-cols-2 gap-2">
+                    <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
                       <div className="rounded-xl bg-slate-50 px-3 py-2">
                         <p className="text-[9px] font-black uppercase text-slate-400">Base {whatIfReference.label}</p>
                         <p className="mt-1 font-mono text-xs font-black text-slate-900">{money(control.base)}</p>
@@ -3376,6 +3406,10 @@ export function Financeiro() {
                       <div className={cn('rounded-xl px-3 py-2', control.amount >= 0 ? 'bg-emerald-50' : 'bg-rose-50')}>
                         <p className="text-[9px] font-black uppercase text-slate-400">Variação</p>
                         <p className={cn('mt-1 font-mono text-xs font-black', control.amount >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{money(control.amount)}</p>
+                      </div>
+                      <div className={cn('rounded-xl px-3 py-2', control.tone === 'emerald' ? 'bg-emerald-50' : 'bg-rose-50')}>
+                        <p className={cn('text-[9px] font-black uppercase', control.tone === 'emerald' ? 'text-emerald-700' : 'text-rose-700')}>{control.simulatedLabel}</p>
+                        <p className={cn('mt-1 font-mono text-xs font-black', control.tone === 'emerald' ? 'text-emerald-800' : 'text-rose-800')}>{money(control.base + control.amount)}</p>
                       </div>
                     </div>
                   </div>
@@ -3389,12 +3423,12 @@ export function Financeiro() {
                 <p className="mt-1 font-mono text-lg font-black text-slate-950">{money(carneLeaoReport.taxableBase)}</p>
               </div>
               <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
-                <p className="text-[9px] font-black uppercase tracking-widest text-indigo-700">Variação de base</p>
-                <p className={cn('mt-1 font-mono text-lg font-black', simulationBaseDelta >= 0 ? 'text-indigo-950' : 'text-emerald-700')}>{money(simulationBaseDelta)}</p>
+                <p className="text-[9px] font-black uppercase tracking-widest text-indigo-700">Base simulada</p>
+                <p className={cn('mt-1 font-mono text-lg font-black', simulationBaseDelta >= 0 ? 'text-indigo-950' : 'text-emerald-700')}>{money(simulatedTax.appliedBase)}</p>
               </div>
               <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4">
-                <p className="text-[9px] font-black uppercase tracking-widest text-rose-700">Impacto no IRPF</p>
-                <p className={cn('mt-1 font-mono text-lg font-black', simulationTaxDelta >= 0 ? 'text-rose-700' : 'text-emerald-700')}>{money(simulationTaxDelta)}</p>
+                <p className="text-[9px] font-black uppercase tracking-widest text-rose-700">Imposto a pagar simulado</p>
+                <p className={cn('mt-1 font-mono text-lg font-black', simulatedTax.tax > 0 ? 'text-rose-700' : 'text-emerald-700')}>{money(simulatedTax.tax)}</p>
               </div>
               <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
                 <p className="text-[9px] font-black uppercase tracking-widest text-emerald-700">Saldo líquido simulado</p>
@@ -3417,21 +3451,29 @@ export function Financeiro() {
               <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
                 <p className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Cenário simulado</p>
                 <div className="mt-3 space-y-2 text-xs font-bold">
-                  <div className="flex justify-between gap-3"><span>Receitas consideradas</span><span className="font-mono">{money(carneLeaoReport.totalRevenue + simulationRevenue)}</span></div>
+                  <div className="flex justify-between gap-3"><span>Receitas consideradas</span><span className="font-mono">{money(simulatedRevenueTotal)}</span></div>
                   <div className="flex justify-between gap-3"><span>Receita por percentual</span><span className="font-mono">{money(simulationPercentRevenue)}</span></div>
-                  <div className="flex justify-between gap-3"><span>Deduções consideradas</span><span className="font-mono">{money(carneLeaoReport.totalDeductible + simulationExpense)}</span></div>
+                  <div className="flex justify-between gap-3"><span>Deduções consideradas</span><span className="font-mono">{money(simulatedDeductionTotal)}</span></div>
                   <div className="flex justify-between gap-3"><span>Despesa por percentual</span><span className="font-mono">{money(simulationPercentExpense)}</span></div>
                   <div className="flex justify-between gap-3"><span>Nova base</span><span className="font-mono">{money(simulatedTax.appliedBase)}</span></div>
                   <div className="flex justify-between gap-3 text-rose-600"><span>Novo IRPF</span><span className="font-mono">{money(simulatedTax.tax)}</span></div>
                 </div>
               </div>
-              <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
-                <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Leitura prática</p>
-                <p className="mt-3 text-sm font-black text-slate-950">
-                  {simulationBaseDelta >= 0 ? 'O cenário aumenta a base tributável.' : 'O cenário reduz a base tributável.'}
+              <div className="rounded-2xl border border-rose-100 bg-gradient-to-br from-rose-50 via-white to-amber-50 p-4 shadow-sm">
+                <p className="text-[10px] font-black uppercase tracking-widest text-rose-700">Leitura prática</p>
+                <p className="mt-3 text-xs font-black uppercase tracking-widest text-slate-400">Imposto a pagar nesta simulação</p>
+                <p className={cn('mt-1 font-mono text-3xl font-black italic', simulatedTax.tax > 0 ? 'text-rose-700' : 'text-emerald-700')}>
+                  {money(simulatedTax.tax)}
                 </p>
-                <p className="mt-2 text-xs font-bold leading-relaxed text-amber-900">
-                  Variação de receita soma {money(simulationRevenue)}. Variação de deduções soma {money(simulationExpense)}. O imposto muda {money(simulationTaxDelta)} e o efeito líquido fica em {money(simulationNetImpact)}.
+                <p className="mt-3 text-sm font-black text-slate-950">
+                  {simulatedTax.tax > carneLeaoReport.estimatedTax
+                    ? `O imposto fica ${money(simulationTaxDelta)} maior que o cenário atual.`
+                    : simulatedTax.tax < carneLeaoReport.estimatedTax
+                      ? `O imposto fica ${money(Math.abs(simulationTaxDelta))} menor que o cenário atual.`
+                      : 'O imposto permanece igual ao cenário atual.'}
+                </p>
+                <p className="mt-2 text-xs font-bold leading-relaxed text-slate-600">
+                  Receita simulada: {money(simulatedRevenueTotal)}. Dedução simulada: {money(simulatedDeductionTotal)}. Base tributável simulada: {money(simulatedTax.appliedBase)}. Efeito líquido: {money(simulationNetImpact)}.
                 </p>
               </div>
             </div>
@@ -4215,6 +4257,74 @@ export function Financeiro() {
         transactionId={selectedTransactionId}
         defaultType={modalDefaultType}
       />
+
+      <Dialog open={!!transactionToDelete} onOpenChange={(open) => { if (!open) setTransactionToDelete(null); }}>
+        <DialogContent className="max-w-md bg-white border-none rounded-[2rem] p-6 shadow-2xl overflow-visible font-sans">
+          <div className="flex flex-col items-center text-center p-2">
+            <div className="w-16 h-16 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mb-6 shadow-sm border border-red-100">
+              <Trash2 className="w-8 h-8 stroke-[1.5]" />
+            </div>
+
+            <DialogTitle className="text-2xl font-bold text-slate-800 tracking-tight mb-2">
+              Excluir Lançamento?
+            </DialogTitle>
+
+            <DialogDescription className="text-slate-500 text-sm leading-relaxed mb-6 max-w-xs">
+              Tem certeza que deseja excluir esta {transactionToDelete?.type}? Esta ação não pode ser desfeita e removerá o registro permanentemente.
+            </DialogDescription>
+
+            {transactionToDelete && (
+              <div className="w-full bg-slate-50 rounded-2xl p-4 border border-slate-100/80 mb-6 text-left">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Descrição</span>
+                  <span className={cn(
+                    "text-xs px-2 py-0.5 rounded-full font-medium uppercase",
+                    transactionToDelete.type === 'receita' ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-rose-50 text-rose-600 border border-rose-100"
+                  )}>
+                    {transactionToDelete.type}
+                  </span>
+                </div>
+                <div className="text-slate-700 font-medium text-sm mb-3 truncate">
+                  {transactionToDelete.description || transactionToDelete.category}
+                </div>
+
+                <div className="flex justify-between items-center border-t border-slate-100 pt-3">
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Valor</span>
+                  <span className={cn(
+                    "font-bold text-base",
+                    transactionToDelete.type === 'receita' ? "text-emerald-600" : "text-rose-600"
+                  )}>
+                    R$ {Number(transactionToDelete.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex w-full gap-3 mt-2">
+              <Button
+                variant="outline"
+                onClick={() => setTransactionToDelete(null)}
+                className="flex-1 py-6 rounded-2xl border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-600 font-semibold text-sm transition-all duration-200"
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => {
+                  if (transactionToDelete) {
+                    removeFinance(transactionToDelete.id);
+                    setFinanceAuditEntries(readFinanceAuditEntries());
+                    toast.error('Lançamento excluído com sucesso.');
+                    setTransactionToDelete(null);
+                  }
+                }}
+                className="flex-1 py-6 rounded-2xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-semibold text-sm shadow-md shadow-red-100 hover:shadow-lg transition-all duration-200 border-none"
+              >
+                Sim, Excluir
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }

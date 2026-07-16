@@ -278,7 +278,7 @@ app.post("/api/jarvis/query", async (req, res) => {
 
 app.post("/api/carne-legal-chat", async (req, res) => {
   const { question } = req.body || {};
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
 
   if (!question || typeof question !== "string") {
     return res.status(400).json({ error: "missing_question", message: "Informe uma pergunta." });
@@ -287,7 +287,7 @@ app.post("/api/carne-legal-chat", async (req, res) => {
   if (!apiKey) {
     return res.status(503).json({
       error: "missing_api_key",
-      message: "Ambiente não configurado para IA. Adicione GEMINI_API_KEY no .env."
+      message: "Ambiente não configurado para IA. Adicione OPENAI_API_KEY no .env."
     });
   }
 
@@ -319,28 +319,45 @@ Fontes oficiais Receita Federal usadas como base:
 `;
 
   try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-      systemInstruction: `
-Você é um assistente fiscal de apoio para uma clínica, especializado em dúvidas operacionais sobre Carnê-Leão e Livro Caixa.
-Responda em português do Brasil, com tom claro e direto.
-Use exclusivamente o contexto da Receita Federal fornecido abaixo. Se a pergunta depender de detalhe fora do contexto, diga que precisa validar com a contabilidade/Receita.
-Não invente regra fiscal. Diferencie "em geral pode", "em geral não pode" e "depende de comprovação/atividade".
-Sempre termine com uma linha "Fonte: Receita Federal - Carnê-Leão/Livro Caixa.".
+    const response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `Você é um assistente fiscal de apoio para uma clínica, especializado em dúvidas operacionais sobre Carnê-Leão e Livro Caixa.
+Responda em português do Brasil, com tom claro, confiável, direto e baseado no contexto oficial.
+Se a pergunta depender de detalhes fora do contexto fornecido, oriente o usuário a validar com a contabilidade ou com a própria Receita Federal.
+Não invente regras fiscais. Diferencie com precisão o que "pode ser deduzido", "não pode ser deduzido" ou "depende de comprovação/atividade".
+Ao responder, traga sempre a seção e as bases legais específicas do contexto que sustentam a sua resposta para que o usuário saiba a fonte exata.
+Sempre termine sua resposta com a fonte detalhada no final, em sua própria linha (ex: "Fonte: Receita Federal - Carnê-Leão/Livro Caixa - [Tópico utilizado]").
 
-${receitaContext}
-`
-    });
+Contexto oficial da Receita Federal:
+${receitaContext}`
+          },
+          {
+            role: "user",
+            content: question.slice(0, 2000)
+          }
+        ],
+        temperature: 0.3
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        }
+      }
+    );
 
-    const result = await model.generateContent(question.slice(0, 2000));
-    const response = await result.response;
-    res.json({ text: response.text() });
+    const answer = response.data?.choices?.[0]?.message?.content;
+    res.json({ text: answer });
   } catch (error: any) {
-    console.error("[Carne Legal Chat] Error:", error);
+    console.error("[Carne Legal Chat OpenAI] Error:", error?.response?.data || error?.message);
     res.status(500).json({
       error: "ai_failure",
-      message: "Não foi possível consultar a IA fiscal agora."
+      message: "Não foi possível consultar a IA fiscal da OpenAI agora."
     });
   }
 });

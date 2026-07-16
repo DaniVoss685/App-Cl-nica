@@ -117,7 +117,7 @@ interface ClinicState {
   updatePatient: (id: string, data: Partial<Patient>) => void;
   removePatient: (id: string) => void;
   addAppointment: (a: Omit<Appointment, 'id'>, customReturnDate?: string) => void;
-  updateAppointment: (id: string, data: Partial<Appointment>) => void;
+  updateAppointment: (id: string, data: Partial<Appointment>, skipFinanceSync?: boolean) => void;
   removeAppointment: (id: string) => void;
   addService: (s: Omit<Service, 'id'>) => void;
   updateService: (id: string, data: Partial<Service>) => void;
@@ -991,6 +991,28 @@ export const useStore = create<ClinicState>()(
         const { currentClient } = get();
         if (!currentClient) return;
 
+        // Define valid database columns for each table to avoid PostgREST column-does-not-exist errors (42703)
+        const TABLE_COLUMNS: Record<string, string[]> = {
+          financeiro_clinica: [
+            'id', 'cliente_clinica_id', 'patient_id', 'appointment_id', 'package_id',
+            'amount', 'created_at', 'installments', 'card_installments', 'payment_splits',
+            'payment_method', 'category', 'type', 'description', 'due_date', 'payment_date', 'status'
+          ],
+          agendamentos_clinica: [
+            'id', 'cliente_clinica_id', 'patient_id', 'professional_id', 'service_id', 'package_id',
+            'value', 'is_case_study', 'linked_to_appointment_id', 'custom_item_costs_used',
+            'upfront_paid', 'upfront_paid_amount', 'created_at', 'installments',
+            'card_installments', 'payment_splits', 'date', 'start_time', 'end_time',
+            'status', 'confirmation_status', 'type', 'payment_date', 'payment_status',
+            'payment_method', 'notes'
+          ],
+          documentos_clinica: [
+            'id', 'cliente_clinica_id', 'patient_id', 'name', 'type', 'date', 'url', 'status',
+            'financial_transaction_id', 'fiscal_document_type', 'fiscal_document_number', 'amount',
+            'category', 'created_at'
+          ]
+        };
+
         try {
           if (operation === 'delete') {
             await supabase
@@ -999,10 +1021,19 @@ export const useStore = create<ClinicState>()(
               .eq('id', data.id)
               .eq('cliente_clinica_id', currentClient.id);
           } else {
-            const dbData = {
+            let dbData = {
               ...toSnakeCase(Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined))),
               cliente_clinica_id: currentClient.id
             };
+
+            // Filter columns if we have a defined schema for this table
+            if (TABLE_COLUMNS[table]) {
+              const validCols = TABLE_COLUMNS[table];
+              dbData = Object.fromEntries(
+                Object.entries(dbData).filter(([key]) => validCols.includes(key))
+              ) as any;
+            }
+
             if (operation === 'insert') {
               const { error } = await supabase.from(table).insert(dbData);
               if (error) throw error;
@@ -1612,7 +1643,7 @@ export const useStore = create<ClinicState>()(
             } else {
               const txAmount = newAppt.paymentStatus === 'parcial'
                 ? (newAppt.upfrontPaidAmount || 0)
-                : (newAppt.paymentStatus === 'pago' ? (newAppt.value || 0) : 0);
+                : (newAppt.value || 0);
 
               const txData = {
                 id: generateUUID(),
@@ -1647,7 +1678,7 @@ export const useStore = create<ClinicState>()(
           get().syncToSupabase('agendamentos_clinica', returnAppt, 'insert');
         }
       },
-      updateAppointment: (id, data) => set((state) => {
+      updateAppointment: (id, data, skipFinanceSync = false) => set((state) => {
         const updated = state.appointments.map(a => a.id === id ? { ...a, ...data } : a);
         const appt = updated.find(a => a.id === id);
         if (appt) get().syncToSupabase('agendamentos_clinica', appt, 'update');
@@ -1783,64 +1814,99 @@ export const useStore = create<ClinicState>()(
 
         // Finance integration
         let finalFinance = state.finance;
-        if (appt && (appt.status === 'realizado' || appt.status === 'finalizado')) {
+        if (!skipFinanceSync && appt && (appt.status === 'realizado' || appt.status === 'finalizado')) {
           const patient = state.patients.find(p => p.id === appt.patientId);
           const service = state.services.find(s => s.id === appt.serviceId);
           const pkg = state.packages.find(p => p.id === appt.packageId);
           const description = `Consulta - ${patient?.name || 'Paciente'} (${service?.name || pkg?.name || 'Atendimento'})`;
 
-          // Delete all existing financial transactions for this appointment
           const existingTxs = state.finance.filter(f => f.appointmentId === appt.id);
-          existingTxs.forEach(tx => get().syncToSupabase('financeiro_clinica', { id: tx.id }, 'delete'));
 
-          // Remove them from local state
-          const cleanFinance = state.finance.filter(f => f.appointmentId !== appt.id);
+          if (existingTxs.length > 0) {
+            // Update existing transaction in place
+            const updatedFinance = state.finance.map(f => {
+              if (f.appointmentId === appt.id) {
+                const isMultiple = appt.paymentMethod === 'múltiplo';
+                const txStatus = isMultiple
+                  ? (appt.paymentSplits?.every(s => s.status === 'pago') ? 'pago' : 'pendente')
+                  : (appt.paymentStatus === 'pago' ? 'pago' : 'pendente');
 
-          if (appt.paymentMethod === 'múltiplo' && appt.paymentSplits && appt.paymentSplits.length > 0) {
-            const txStatus = appt.paymentSplits.every(s => s.status === 'pago') ? 'pago' : 'pendente';
-            const totalSplitsAmount = appt.paymentSplits.reduce((sum, s) => sum + s.amount, 0);
+                const txAmount = isMultiple
+                  ? (appt.paymentSplits?.reduce((sum, s) => sum + s.amount, 0) || appt.value || 0)
+                  : (appt.paymentStatus === 'parcial' ? (appt.upfrontPaidAmount || 0) : (appt.value || 0));
 
-            const newTx = {
-              id: generateUUID(),
-              patientId: appt.patientId,
-              appointmentId: appt.id,
-              packageId: appt.packageId || undefined,
-              type: 'receita' as const,
-              amount: totalSplitsAmount || appt.value || 0,
-              dueDate: appt.date,
-              paymentDate: txStatus === 'pago' ? (appt.paymentDate || appt.date) : undefined,
-              status: txStatus as 'pago' | 'pendente',
-              paymentMethod: 'múltiplo' as const,
-              category: 'Atendimentos',
-              description: description,
-              paymentSplits: appt.paymentSplits
-            };
-            finalFinance = [...cleanFinance, newTx];
-            get().syncToSupabase('financeiro_clinica', newTx, 'insert');
+                return {
+                  ...f,
+                  patientId: appt.patientId,
+                  packageId: appt.packageId || undefined,
+                  amount: txAmount,
+                  // Only update dueDate if appointment date actually changed
+                  dueDate: data.date && oldAppt && data.date !== oldAppt.date ? data.date : f.dueDate,
+                  paymentDate: appt.paymentStatus === 'pago' || appt.paymentStatus === 'parcial' ? (f.paymentDate || appt.paymentDate || appt.date) : undefined,
+                  status: txStatus as 'pago' | 'pendente',
+                  paymentMethod: appt.paymentMethod || undefined,
+                  cardInstallments: appt.paymentMethod === 'cartão de crédito' ? appt.cardInstallments : undefined,
+                  paymentSplits: isMultiple ? appt.paymentSplits : [],
+                  // Keep custom description and category if they exist, otherwise fallback
+                  description: f.description || description,
+                  category: f.category || 'Atendimentos'
+                };
+              }
+              return f;
+            });
+
+            // Sync updated transactions to Supabase
+            const updatedTxs = updatedFinance.filter(f => f.appointmentId === appt.id);
+            updatedTxs.forEach(tx => get().syncToSupabase('financeiro_clinica', tx, 'update'));
+            finalFinance = updatedFinance;
           } else {
-            const txAmount = appt.paymentStatus === 'parcial'
-              ? (appt.upfrontPaidAmount || 0)
-              : (appt.paymentStatus === 'pago' ? (appt.value || 0) : 0);
+            // Create a brand new transaction
+            if (appt.paymentMethod === 'múltiplo' && appt.paymentSplits && appt.paymentSplits.length > 0) {
+              const txStatus = appt.paymentSplits.every(s => s.status === 'pago') ? 'pago' : 'pendente';
+              const totalSplitsAmount = appt.paymentSplits.reduce((sum, s) => sum + s.amount, 0);
 
-            const txData = {
-              id: generateUUID(),
-              patientId: appt.patientId,
-              appointmentId: appt.id,
-              packageId: appt.packageId || undefined,
-              type: 'receita' as const,
-              amount: txAmount,
-              dueDate: appt.date,
-              paymentDate: appt.paymentStatus === 'pago' || appt.paymentStatus === 'parcial' ? (appt.paymentDate || appt.date) : undefined,
-              status: (appt.paymentStatus === 'pago' ? 'pago' : 'pendente') as 'pago' | 'pendente',
-              paymentMethod: appt.paymentMethod || undefined,
-              cardInstallments: appt.cardInstallments || undefined,
-              category: 'Atendimentos',
-              description
-            };
-            finalFinance = [...cleanFinance, txData];
-            get().syncToSupabase('financeiro_clinica', txData, 'insert');
+              const newTx = {
+                id: generateUUID(),
+                patientId: appt.patientId,
+                appointmentId: appt.id,
+                packageId: appt.packageId || undefined,
+                type: 'receita' as const,
+                amount: totalSplitsAmount || appt.value || 0,
+                dueDate: appt.date,
+                paymentDate: txStatus === 'pago' ? (appt.paymentDate || appt.date) : undefined,
+                status: txStatus as 'pago' | 'pendente',
+                paymentMethod: 'múltiplo' as const,
+                category: 'Atendimentos',
+                description: description,
+                paymentSplits: appt.paymentSplits
+              };
+              finalFinance = [...state.finance, newTx];
+              get().syncToSupabase('financeiro_clinica', newTx, 'insert');
+            } else {
+              const txAmount = appt.paymentStatus === 'parcial'
+                ? (appt.upfrontPaidAmount || 0)
+                : (appt.value || 0);
+
+              const txData = {
+                id: generateUUID(),
+                patientId: appt.patientId,
+                appointmentId: appt.id,
+                packageId: appt.packageId || undefined,
+                type: 'receita' as const,
+                amount: txAmount,
+                dueDate: appt.date,
+                paymentDate: appt.paymentStatus === 'pago' || appt.paymentStatus === 'parcial' ? (appt.paymentDate || appt.date) : undefined,
+                status: (appt.paymentStatus === 'pago' ? 'pago' : 'pendente') as 'pago' | 'pendente',
+                paymentMethod: appt.paymentMethod || undefined,
+                cardInstallments: appt.cardInstallments || undefined,
+                category: 'Atendimentos',
+                description
+              };
+              finalFinance = [...state.finance, txData];
+              get().syncToSupabase('financeiro_clinica', txData, 'insert');
+            }
           }
-        } else if (appt) {
+        } else if (!skipFinanceSync && appt) {
           const existingTxs = state.finance.filter(f => f.appointmentId === appt.id);
           existingTxs.forEach(tx => get().syncToSupabase('financeiro_clinica', { id: tx.id }, 'delete'));
           finalFinance = state.finance.filter(f => f.appointmentId !== appt.id);

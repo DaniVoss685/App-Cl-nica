@@ -1454,8 +1454,9 @@ export function FinanceModal({ open, onOpenChange, transactionId, initialPatient
         cardInstallments: cleanPayload.cardInstallments,
         upfrontPaid: finalStatus === 'pago',
         upfrontPaidAmount: cleanPayload.amount,
-        paymentDate: cleanPayload.paymentDate
-      });
+        paymentDate: cleanPayload.paymentDate,
+        paymentSplits: cleanPayload.paymentSplits || []
+      }, true);
     }
 
     setSuccessSummary({
