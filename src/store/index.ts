@@ -1320,6 +1320,80 @@ export const useStore = create<ClinicState>()(
           }
 
           const remoteInventory = inv.data ? toCamelCase(inv.data) as InventoryItem[] : [];
+          const localFinanceById = new Map(localFinance.map(item => [item.id, item]));
+          const remoteFinanceRaw = fin.data ? toCamelCase(fin.data).map((f: any) => ({
+            ...f,
+            amount: Number(f.amount),
+            taxEntity: f.taxEntity || 'pessoa_fisica',
+            paymentSplits: Array.isArray(f.paymentSplits) ? f.paymentSplits.map((s: any) => ({
+              ...s,
+              amount: Number(s.amount)
+            })) : []
+          })) as FinancialTransaction[] : [];
+
+          const mergeFinancialMetadata = (remote: FinancialTransaction) => {
+            const local = localFinanceById.get(remote.id);
+            if (!local) return remote;
+
+            const merged: FinancialTransaction = { ...remote };
+
+            if ((!merged.taxEntity || merged.taxEntity === 'pessoa_fisica') && local.taxEntity) {
+              merged.taxEntity = local.taxEntity;
+            }
+
+            if (remote.type === 'receita') {
+              if ((!merged.fiscalDocumentType || merged.fiscalDocumentType === 'nenhum') && local.fiscalDocumentType && local.fiscalDocumentType !== 'nenhum') {
+                merged.fiscalDocumentType = local.fiscalDocumentType;
+              }
+              if (!merged.fiscalDocumentNumber && local.fiscalDocumentNumber) merged.fiscalDocumentNumber = local.fiscalDocumentNumber;
+              if (!merged.fiscalDocumentDate && local.fiscalDocumentDate) merged.fiscalDocumentDate = local.fiscalDocumentDate;
+              if (!merged.fiscalAttachmentName && local.fiscalAttachmentName) merged.fiscalAttachmentName = local.fiscalAttachmentName;
+              if (!merged.fiscalAttachmentUrl && local.fiscalAttachmentUrl) merged.fiscalAttachmentUrl = local.fiscalAttachmentUrl;
+            }
+
+            if (remote.type === 'despesa') {
+              if (!merged.isDeductible && local.isDeductible) merged.isDeductible = true;
+              if (!merged.deductibleCategoryId && local.deductibleCategoryId) merged.deductibleCategoryId = local.deductibleCategoryId;
+              if (!merged.supplierName && local.supplierName) merged.supplierName = local.supplierName;
+              if (!merged.supplierDocument && local.supplierDocument) merged.supplierDocument = local.supplierDocument;
+            }
+
+            return merged;
+          };
+
+          const remoteFinance = remoteFinanceRaw.map(mergeFinancialMetadata);
+          const repairFields: Array<keyof FinancialTransaction> = [
+            'fiscalDocumentType',
+            'fiscalDocumentNumber',
+            'fiscalDocumentDate',
+            'fiscalAttachmentName',
+            'fiscalAttachmentUrl',
+            'isDeductible',
+            'deductibleCategoryId',
+            'supplierName',
+            'supplierDocument',
+            'taxEntity'
+          ];
+          remoteFinance.forEach((tx, index) => {
+            const original = remoteFinanceRaw[index];
+            const hasRepair = repairFields.some(field => original?.[field] !== tx[field] && tx[field] !== undefined);
+            if (hasRepair) void get().syncToSupabase('financeiro_clinica', tx, 'update');
+          });
+
+          const remoteDocumentList = Array.isArray(remoteDocuments) ? remoteDocuments as Document[] : [];
+          const remoteDocumentIds = new Set(remoteDocumentList.map(doc => doc.id));
+          const remoteFinanceIds = new Set(remoteFinance.map(tx => tx.id));
+          const mergedDocuments = [...remoteDocumentList];
+
+          localDocuments.forEach(doc => {
+            if (!doc.id || remoteDocumentIds.has(doc.id)) return;
+            if (!doc.financialTransactionId || !remoteFinanceIds.has(doc.financialTransactionId)) return;
+            const docType = doc.fiscalDocumentType || doc.type;
+            if (docType !== 'nota_fiscal' && docType !== 'recibo') return;
+            mergedDocuments.push(doc);
+            remoteDocumentIds.add(doc.id);
+            void get().syncToSupabase('documentos_clinica', doc, 'upsert');
+          });
 
           set({
             patients: ps.data ? toCamelCase(ps.data) : [],
@@ -1333,15 +1407,7 @@ export const useStore = create<ClinicState>()(
               value: s.value ? Number(s.value) : 0
             })) : [],
             professionals: profs.data ? toCamelCase(profs.data) : [],
-            finance: fin.data ? toCamelCase(fin.data).map((f: any) => ({
-              ...f,
-              amount: Number(f.amount),
-              taxEntity: f.taxEntity || 'pessoa_fisica',
-              paymentSplits: Array.isArray(f.paymentSplits) ? f.paymentSplits.map((s: any) => ({
-                ...s,
-                amount: Number(s.amount)
-              })) : []
-            })) : [],
+            finance: remoteFinance,
             packages: pkgs.data ? toCamelCase(pkgs.data) : [],
             inventory: remoteInventory,
             inventoryPurchases: remoteInventoryPurchases,
@@ -1357,7 +1423,7 @@ export const useStore = create<ClinicState>()(
             ])).sort((a, b) => a.localeCompare(b, 'pt-BR')),
             supplyExpenses: exp.data ? toCamelCase(exp.data) : [],
             deductibleCategories: deductibleRes.data && deductibleRes.data.length > 0 ? toCamelCase(deductibleRes.data) : get().deductibleCategories,
-            documents: remoteDocuments,
+            documents: mergedDocuments,
             opportunities: opps.data ? toCamelCase(opps.data) : [],
             medicalRecords: recordsRes.data ? toCamelCase(recordsRes.data) : get().medicalRecords,
             doctorNotes: notesRes.data ? toCamelCase(notesRes.data) : get().doctorNotes,

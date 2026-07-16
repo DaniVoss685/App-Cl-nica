@@ -52,7 +52,7 @@ import {
 import { toast } from 'sonner';
 
 import { useStore } from '../store';
-import type { FinancialTransaction } from '../types';
+import type { Document as ClinicDocument, FinancialTransaction } from '../types';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import {
@@ -990,7 +990,18 @@ function FilterDropdown<T extends string>({
 }
 
 export function Financeiro() {
-  const { finance, patients, professionals, documents, deductibleCategories, addFinance, updateFinance, removeFinance } = useStore();
+  const {
+    finance,
+    patients,
+    professionals,
+    documents,
+    deductibleCategories,
+    addFinance,
+    updateFinance,
+    removeFinance,
+    addDeductibleCategory,
+    updateDeductibleCategory
+  } = useStore();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = (searchParams.get('tab') as FinanceTab) || 'overview';
   const activeTab: FinanceTab = tabConfig.some(tab => tab.id === initialTab) ? initialTab : 'overview';
@@ -1081,19 +1092,44 @@ export function Financeiro() {
       fiscalDocumentType?: FinancialTransaction['fiscalDocumentType'];
       fiscalDocumentNumber?: string;
     }>();
-    (documents || []).forEach(doc => {
-      if (!doc.financialTransactionId) return;
+
+    const toFiscalEntry = (doc: ClinicDocument) => {
       const docType = doc.fiscalDocumentType || doc.type;
       const fiscalType = docType === 'nota_fiscal' || docType === 'recibo' ? docType : undefined;
-      byTransaction.set(doc.financialTransactionId, {
+      if (!fiscalType) return null;
+      return {
         url: doc.url,
         name: doc.name,
         fiscalDocumentType: fiscalType,
         fiscalDocumentNumber: doc.fiscalDocumentNumber
-      });
+      };
+    };
+
+    (documents || []).forEach(doc => {
+      if (!doc.financialTransactionId) return;
+      const entry = toFiscalEntry(doc);
+      if (entry) byTransaction.set(doc.financialTransactionId, entry);
     });
+
+    finance.forEach(tx => {
+      if (byTransaction.has(tx.id) || tx.type !== 'receita' || !tx.patientId) return;
+      const expectedType = tx.fiscalDocumentType && tx.fiscalDocumentType !== 'nenhum' ? tx.fiscalDocumentType : undefined;
+      const dateCandidates = [tx.fiscalDocumentDate, tx.paymentDate, tx.dueDate].filter(Boolean);
+      const linkedByPatient = (documents || []).find(doc => {
+        if (!doc.url || doc.patientId !== tx.patientId) return false;
+        const entry = toFiscalEntry(doc);
+        if (!entry) return false;
+        if (expectedType && entry.fiscalDocumentType !== expectedType) return false;
+        const sameAmount = typeof doc.amount !== 'number' || Math.abs(Number(doc.amount) - Number(tx.amount)) < 0.01;
+        const sameDate = !doc.date || dateCandidates.includes(doc.date);
+        return sameAmount && sameDate;
+      });
+      const entry = linkedByPatient ? toFiscalEntry(linkedByPatient) : null;
+      if (entry) byTransaction.set(tx.id, entry);
+    });
+
     return byTransaction;
-  }, [documents]);
+  }, [documents, finance]);
 
   const decoratedTransactions = useMemo(() => {
     return finance.map(tx => {
@@ -1165,8 +1201,13 @@ export function Financeiro() {
   }, [financeCategoryState]);
 
   const deductibleCategoryNames = useMemo(() => {
-    return new Set(deductibleFinanceCategories.map(category => normalizeText(category.name)));
-  }, [deductibleFinanceCategories]);
+    return new Set([
+      ...deductibleFinanceCategories.map(category => normalizeText(category.name)),
+      ...(deductibleCategories || [])
+        .filter(category => category.active !== false)
+        .map(category => normalizeText(category.name))
+    ]);
+  }, [deductibleCategories, deductibleFinanceCategories]);
 
   const registeredDeductibleCategories = useMemo(() => {
     const byName = new Map<string, { id: string; name: string; active: boolean; description?: string; source: string }>();
@@ -1962,9 +2003,36 @@ export function Financeiro() {
     }
   };
 
+  const syncRemoteDeductibleCategories = (next: FinanceCategoryState) => {
+    const remoteByName = new Map(
+      (deductibleCategories || []).map(category => [normalizeText(category.name), category])
+    );
+
+    next.despesa.forEach(category => {
+      const key = normalizeText(category.name);
+      if (!key) return;
+      const remoteCategory = remoteByName.get(key);
+
+      if (category.deductible === true) {
+        if (!remoteCategory) {
+          addDeductibleCategory({
+            name: category.name,
+            active: true,
+            description: 'Categoria financeira marcada como dedutivel.'
+          });
+        } else if (remoteCategory.active === false) {
+          updateDeductibleCategory(remoteCategory.id, { active: true });
+        }
+      } else if (remoteCategory && remoteCategory.active !== false) {
+        updateDeductibleCategory(remoteCategory.id, { active: false });
+      }
+    });
+  };
+
   const persistFinanceCategories = (next: FinanceCategoryState) => {
     setFinanceCategoryState(next);
     saveFinanceCategoryState(next);
+    syncRemoteDeductibleCategories(next);
   };
 
   const expenseCategoryCatalog = financeCategoryState.despesa || [];
