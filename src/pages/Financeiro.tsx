@@ -155,6 +155,8 @@ const IRPF_MONTHLY_TABLE_2025 = [
   { limit: 4664.68, rate: 0.225, deduction: 675.49 },
   { limit: Infinity, rate: 0.275, deduction: 908.73 }
 ] as const;
+const IRPF_MONTHLY_EXEMPT_LIMIT = IRPF_MONTHLY_TABLE_2025[0].limit;
+const IRPF_MONTHLY_TAX_START_BASE = IRPF_MONTHLY_EXEMPT_LIMIT + 0.01;
 const IRPF_TABLE_LABEL = 'Tabela progressiva mensal IRPF 2025 (Receita Federal, a partir de maio/2025)';
 const IRPF_LEGAL_BASIS = 'Lei 15.191/2025 e orientações da Receita Federal para Carnê-Leão/Livro Caixa.';
 const CARNE_LEGAL_BASIS_ITEMS = [
@@ -1072,25 +1074,49 @@ export function Financeiro() {
     return Array.from(years).sort((a, b) => b.localeCompare(a));
   }, [finance, currentYearStr]);
 
-  const decoratedTransactions = useMemo(() => {
-    return finance.map(tx => ({
-      ...tx,
-      computedStatus: computedStatus(tx),
-      effectiveDate: effectiveDate(tx),
-      patientName: patients.find(patient => patient.id === tx.patientId)?.name || (tx.type === 'receita' ? 'Diversos' : 'Geral'),
-      professionalName: professionals.find(professional => professional.id === tx.professionalId)?.name || (tx.professionalId ? 'Profissional removido' : 'Sem profissional')
-    }));
-  }, [finance, patients, professionals]);
-
   const fiscalDocumentByTransaction = useMemo(() => {
-    const byTransaction = new Map<string, { url?: string; name?: string }>();
+    const byTransaction = new Map<string, {
+      url?: string;
+      name?: string;
+      fiscalDocumentType?: FinancialTransaction['fiscalDocumentType'];
+      fiscalDocumentNumber?: string;
+    }>();
     (documents || []).forEach(doc => {
-      if (doc.financialTransactionId && doc.url) {
-        byTransaction.set(doc.financialTransactionId, { url: doc.url, name: doc.name });
-      }
+      if (!doc.financialTransactionId) return;
+      const docType = doc.fiscalDocumentType || doc.type;
+      const fiscalType = docType === 'nota_fiscal' || docType === 'recibo' ? docType : undefined;
+      byTransaction.set(doc.financialTransactionId, {
+        url: doc.url,
+        name: doc.name,
+        fiscalDocumentType: fiscalType,
+        fiscalDocumentNumber: doc.fiscalDocumentNumber
+      });
     });
     return byTransaction;
   }, [documents]);
+
+  const decoratedTransactions = useMemo(() => {
+    return finance.map(tx => {
+      const linkedFiscalDocument = fiscalDocumentByTransaction.get(tx.id);
+      const linkedFiscalType = linkedFiscalDocument?.fiscalDocumentType;
+      const effectiveFiscalType = tx.fiscalDocumentType && tx.fiscalDocumentType !== 'nenhum'
+        ? tx.fiscalDocumentType
+        : linkedFiscalType || tx.fiscalDocumentType;
+
+      return {
+        ...tx,
+        fiscalDocumentType: effectiveFiscalType,
+        fiscalDocumentNumber: tx.fiscalDocumentNumber || linkedFiscalDocument?.fiscalDocumentNumber,
+        fiscalAttachmentName: tx.fiscalAttachmentName || linkedFiscalDocument?.name,
+        fiscalAttachmentUrl: tx.fiscalAttachmentUrl || linkedFiscalDocument?.url,
+        taxEntity: tx.taxEntity || (effectiveFiscalType === 'nota_fiscal' ? 'pessoa_juridica' : 'pessoa_fisica'),
+        computedStatus: computedStatus(tx),
+        effectiveDate: effectiveDate(tx),
+        patientName: patients.find(patient => patient.id === tx.patientId)?.name || (tx.type === 'receita' ? 'Diversos' : 'Geral'),
+        professionalName: professionals.find(professional => professional.id === tx.professionalId)?.name || (tx.professionalId ? 'Profissional removido' : 'Sem profissional')
+      };
+    });
+  }, [finance, fiscalDocumentByTransaction, patients, professionals]);
 
   const paymentMethodOptions = useMemo(() => {
     const options = [...paymentMethodBaseOptions];
@@ -1419,6 +1445,8 @@ export function Financeiro() {
   const simulationNetImpact = simulationRevenue - simulationExpense - simulationTaxDelta;
   const simulatedRevenueTotal = carneLeaoReport.totalRevenue + simulationRevenue;
   const simulatedDeductionTotal = carneLeaoReport.totalDeductible + simulationExpense;
+  const taxStartsAtRevenue = simulatedDeductionTotal + IRPF_MONTHLY_TAX_START_BASE;
+  const taxStartRevenueGap = taxStartsAtRevenue - simulatedRevenueTotal;
 
   const fiscalPendingByPatient = useMemo(() => {
     const byPatient = new Map<string, { id: string; name: string; count: number; total: number; missingDocument: number; missingProof: number }>();
@@ -1507,7 +1535,7 @@ export function Financeiro() {
   const annualFinanceSeries = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const annualTransactions = decoratedTransactions
-      .filter(tx => tx.effectiveDate?.startsWith(selectedYear))
+      .filter(tx => isPaid(tx) && tx.paymentDate?.startsWith(selectedYear))
       .filter(tx => statusFilter === 'todos' || tx.computedStatus === statusFilter)
       .filter(tx => paymentMethodFilter === 'todos' || (tx.paymentMethod || 'não especificado') === paymentMethodFilter)
       .filter(tx => categoryFilter === 'todos' || (tx.category || 'Geral') === categoryFilter)
@@ -1533,7 +1561,7 @@ export function Financeiro() {
     return monthOptions
       .filter(month => month.value !== 'todos')
       .map(month => {
-        const monthTransactions = annualTransactions.filter(tx => tx.effectiveDate?.startsWith(`${selectedYear}-${month.value}`));
+        const monthTransactions = annualTransactions.filter(tx => tx.paymentDate?.startsWith(`${selectedYear}-${month.value}`));
         const entradas = monthTransactions.filter(tx => tx.type === 'receita').reduce((sum, tx) => sum + tx.amount, 0);
         const saidas = monthTransactions.filter(tx => tx.type === 'despesa').reduce((sum, tx) => sum + tx.amount, 0);
         return {
@@ -3403,11 +3431,11 @@ export function Financeiro() {
                         <p className="text-[9px] font-black uppercase text-slate-400">Base {whatIfReference.label}</p>
                         <p className="mt-1 font-mono text-xs font-black text-slate-900">{money(control.base)}</p>
                       </div>
-                      <div className={cn('rounded-xl px-3 py-2', control.amount >= 0 ? 'bg-emerald-50' : 'bg-rose-50')}>
+                      <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
                         <p className="text-[9px] font-black uppercase text-slate-400">Variação</p>
-                        <p className={cn('mt-1 font-mono text-xs font-black', control.amount >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{money(control.amount)}</p>
+                        <p className={cn('mt-1 font-mono text-xs font-black', control.amount > 0 ? 'text-emerald-700' : control.amount < 0 ? 'text-rose-700' : 'text-slate-900')}>{money(control.amount)}</p>
                       </div>
-                      <div className={cn('rounded-xl px-3 py-2', control.tone === 'emerald' ? 'bg-emerald-50' : 'bg-rose-50')}>
+                      <div className={cn('rounded-xl border bg-white px-3 py-2', control.tone === 'emerald' ? 'border-emerald-100' : 'border-rose-100')}>
                         <p className={cn('text-[9px] font-black uppercase', control.tone === 'emerald' ? 'text-emerald-700' : 'text-rose-700')}>{control.simulatedLabel}</p>
                         <p className={cn('mt-1 font-mono text-xs font-black', control.tone === 'emerald' ? 'text-emerald-800' : 'text-rose-800')}>{money(control.base + control.amount)}</p>
                       </div>
@@ -3418,19 +3446,19 @@ export function Financeiro() {
             </div>
 
             <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-              <div className="rounded-2xl border border-slate-150 bg-slate-50 p-4">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Base atual</p>
                 <p className="mt-1 font-mono text-lg font-black text-slate-950">{money(carneLeaoReport.taxableBase)}</p>
               </div>
-              <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
+              <div className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm">
                 <p className="text-[9px] font-black uppercase tracking-widest text-indigo-700">Base simulada</p>
                 <p className={cn('mt-1 font-mono text-lg font-black', simulationBaseDelta >= 0 ? 'text-indigo-950' : 'text-emerald-700')}>{money(simulatedTax.appliedBase)}</p>
               </div>
-              <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4">
+              <div className={cn('rounded-2xl border bg-white p-4 shadow-sm', simulatedTax.tax > 0 ? 'border-rose-100' : 'border-slate-200')}>
                 <p className="text-[9px] font-black uppercase tracking-widest text-rose-700">Imposto a pagar simulado</p>
-                <p className={cn('mt-1 font-mono text-lg font-black', simulatedTax.tax > 0 ? 'text-rose-700' : 'text-emerald-700')}>{money(simulatedTax.tax)}</p>
+                <p className={cn('mt-1 font-mono text-lg font-black', simulatedTax.tax > 0 ? 'text-rose-700' : 'text-slate-950')}>{money(simulatedTax.tax)}</p>
               </div>
-              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+              <div className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
                 <p className="text-[9px] font-black uppercase tracking-widest text-emerald-700">Saldo líquido simulado</p>
                 <p className={cn('mt-1 font-mono text-lg font-black', simulationNetImpact >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{money(simulationNetImpact)}</p>
               </div>
@@ -3459,10 +3487,10 @@ export function Financeiro() {
                   <div className="flex justify-between gap-3 text-rose-600"><span>Novo IRPF</span><span className="font-mono">{money(simulatedTax.tax)}</span></div>
                 </div>
               </div>
-              <div className="rounded-2xl border border-rose-100 bg-gradient-to-br from-rose-50 via-white to-amber-50 p-4 shadow-sm">
-                <p className="text-[10px] font-black uppercase tracking-widest text-rose-700">Leitura prática</p>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Leitura prática</p>
                 <p className="mt-3 text-xs font-black uppercase tracking-widest text-slate-400">Imposto a pagar nesta simulação</p>
-                <p className={cn('mt-1 font-mono text-3xl font-black italic', simulatedTax.tax > 0 ? 'text-rose-700' : 'text-emerald-700')}>
+                <p className={cn('mt-1 font-mono text-3xl font-black italic', simulatedTax.tax > 0 ? 'text-rose-700' : 'text-slate-950')}>
                   {money(simulatedTax.tax)}
                 </p>
                 <p className="mt-3 text-sm font-black text-slate-950">
@@ -3475,6 +3503,16 @@ export function Financeiro() {
                 <p className="mt-2 text-xs font-bold leading-relaxed text-slate-600">
                   Receita simulada: {money(simulatedRevenueTotal)}. Dedução simulada: {money(simulatedDeductionTotal)}. Base tributável simulada: {money(simulatedTax.appliedBase)}. Efeito líquido: {money(simulationNetImpact)}.
                 </p>
+                <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/70 px-3 py-2">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-indigo-700">Ponto inicial do IRPF</p>
+                  <p className="mt-1 text-xs font-bold leading-relaxed text-indigo-950">
+                    Com as deduções simuladas, o imposto começa quando a receita considerada passa de {money(taxStartsAtRevenue)}.
+                    {' '}
+                    {taxStartRevenueGap > 0
+                      ? `Ainda faltam ${money(taxStartRevenueGap)} em receita simulada para começar a pagar.`
+                      : `Você já está ${money(Math.abs(taxStartRevenueGap))} acima desse ponto.`}
+                  </p>
+                </div>
               </div>
             </div>
           </SectionPanel>

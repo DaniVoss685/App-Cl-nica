@@ -996,7 +996,11 @@ export const useStore = create<ClinicState>()(
           financeiro_clinica: [
             'id', 'cliente_clinica_id', 'patient_id', 'appointment_id', 'package_id',
             'amount', 'created_at', 'installments', 'card_installments', 'payment_splits',
-            'payment_method', 'category', 'type', 'description', 'due_date', 'payment_date', 'status'
+            'payment_method', 'category', 'type', 'description', 'due_date', 'payment_date', 'status',
+            'fiscal_document_type', 'fiscal_document_number', 'fiscal_document_date',
+            'is_deductible', 'deductible_category_id', 'professional_id',
+            'supplier_name', 'supplier_document', 'tax_entity',
+            'fiscal_attachment_name', 'fiscal_attachment_url'
           ],
           agendamentos_clinica: [
             'id', 'cliente_clinica_id', 'patient_id', 'professional_id', 'service_id', 'package_id',
