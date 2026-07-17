@@ -95,7 +95,19 @@ interface ClinicState {
 
   // Auth state & actions
   currentClient: any | null;
+  masterClient: any | null;
+  supportClients: any[];
   loginClient: (username: string, password: string) => Promise<boolean>;
+  loadSupportClients: () => Promise<void>;
+  enterSupportSession: (client: any) => Promise<void>;
+  exitSupportSession: () => Promise<void>;
+  resetClientPassword: (clientId: string, newPassword: string) => Promise<void>;
+  requestPasswordReset: (username: string, preference?: string) => Promise<void>;
+  passwordResetRequests: any[];
+  passwordResetHistory: any[];
+  loadPasswordResetRequests: () => Promise<void>;
+  loadPasswordResetHistory: () => Promise<void>;
+  resolvePasswordResetRequest: (requestId: string) => Promise<void>;
   registerClient: (name: string, username: string, password: string, phone: string) => Promise<boolean>;
   logoutClient: () => void;
   syncFromSupabase: (clientId: string) => Promise<void>;
@@ -318,6 +330,10 @@ export const useStore = create<ClinicState>()(
       activateAI: true,
       isOnboarded: false,
       currentUser: { id: 'u1', name: 'administrador', email: 'admin@clinicflow.ai', role: 'admin', active: true },
+      masterClient: null,
+      supportClients: [],
+      passwordResetRequests: [],
+      passwordResetHistory: [],
       users: [
         { id: 'u1', name: 'administrador', email: 'admin@clinicflow.ai', role: 'admin', active: true },
         { id: 'u2', name: 'recepcionista maria', email: 'recepcao@clinicflow.ai', role: 'recepção', active: true },
@@ -376,12 +392,12 @@ export const useStore = create<ClinicState>()(
           path.startsWith('/equipe') ||
           path.startsWith('/servicos') ||
           path.startsWith('/custos') ||
-          (currentUser?.role === 'admin' && path.startsWith('/configuracoes'));
+          ((currentUser?.role === 'admin' || currentUser?.role === 'master') && path.startsWith('/configuracoes'));
       },
       getAllowedNavigation: () => {
         const { productMode, currentUser } = get();
         if (productMode !== 'financeiro') return ['*'];
-        return currentUser?.role === 'admin'
+        return currentUser?.role === 'admin' || currentUser?.role === 'master'
           ? ['Financeiro', 'Pacientes', 'Equipe', 'Serviços', 'Custos e Preços', 'Configurações']
           : ['Financeiro', 'Pacientes', 'Equipe'];
       },
@@ -895,6 +911,7 @@ export const useStore = create<ClinicState>()(
             });
           } else {
             // Login como Dono (admin)
+            const isMaster = client.accountRole === 'master';
             set({
               currentClient: client,
               clinicName: client.clinicName || 'clínica stark',
@@ -906,11 +923,12 @@ export const useStore = create<ClinicState>()(
                 id: 'u1',
                 name: client.name || 'administrador',
                 email: client.username || 'admin@clinicflow.ai',
-                role: 'admin',
+                role: isMaster ? 'master' : 'admin',
                 active: true,
                 allowedTabs: []
               }
             });
+            if (isMaster) set({ masterClient: client });
           }
 
           // Carrega dados dele em background
@@ -921,6 +939,110 @@ export const useStore = create<ClinicState>()(
           console.error('Erro no login:', e);
           return false;
         }
+      },
+
+      loadSupportClients: async () => {
+        if (get().currentUser?.role !== 'master') return;
+        const { data, error } = await supabase
+          .from('clientes_clinica')
+          .select('id, name, username, phone, clinic_name, clinic_type, is_onboarded, created_at')
+          .neq('account_role', 'master')
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        set({ supportClients: (data || []).map(toCamelCase) });
+      },
+
+      enterSupportSession: async (targetClient) => {
+        const { currentUser, masterClient } = get();
+        if (currentUser?.role !== 'master' || !masterClient?.id) throw new Error('Acesso master necessário.');
+        const target = toCamelCase(targetClient);
+        await supabase.from('acessos_suporte_clinica').insert({
+          master_cliente_id: masterClient.id,
+          cliente_clinica_id: target.id,
+          action: 'enter_support_session'
+        });
+        set({
+          currentClient: target,
+          clinicName: target.clinicName || target.name || 'Clínica',
+          clinicType: target.clinicType || 'estética',
+          productMode: normalizeProductMode(target.productMode),
+          activateAI: target.activateAi ?? true,
+          isOnboarded: target.isOnboarded ?? false,
+          currentUser: { id: 'master-support', name: masterClient.name || 'Suporte', email: masterClient.username || '', role: 'master', active: true, allowedTabs: [] }
+        });
+        await get().syncFromSupabase(target.id);
+      },
+
+      exitSupportSession: async () => {
+        const { masterClient, currentClient } = get();
+        if (!masterClient?.id || currentClient?.id === masterClient.id) return;
+        await supabase.from('acessos_suporte_clinica').insert({
+          master_cliente_id: masterClient.id,
+          cliente_clinica_id: currentClient.id,
+          action: 'exit_support_session'
+        });
+        set({
+          currentClient: masterClient,
+          clinicName: masterClient.clinicName || 'Central Master',
+          clinicType: masterClient.clinicType || 'estética',
+          productMode: normalizeProductMode(masterClient.productMode),
+          isOnboarded: masterClient.isOnboarded ?? true,
+          currentUser: { id: 'u1', name: masterClient.name || 'Administrador Master', email: masterClient.username || '', role: 'master', active: true, allowedTabs: [] }
+        });
+        await get().syncFromSupabase(masterClient.id);
+      },
+
+      resetClientPassword: async (clientId, newPassword) => {
+        const { currentUser, masterClient } = get();
+        if (currentUser?.role !== 'master' || !masterClient?.id) throw new Error('Acesso master necessário.');
+        if (newPassword.length < 8) throw new Error('A senha temporária deve ter ao menos 8 caracteres.');
+        const { error } = await supabase
+          .from('clientes_clinica')
+          .update({ password: newPassword })
+          .eq('id', clientId);
+        if (error) throw error;
+        const { error: auditError } = await supabase.from('acessos_suporte_clinica').insert({
+          master_cliente_id: masterClient.id,
+          cliente_clinica_id: clientId,
+          action: 'reset_password'
+        });
+        if (auditError) console.error('Não foi possível registrar a redefinição de senha.', auditError);
+      },
+
+      requestPasswordReset: async (username, preference) => {
+        const { data: client, error: clientError } = await supabase.from('clientes_clinica')
+          .select('id').eq('username', username.trim().toLowerCase()).maybeSingle();
+        if (clientError || !client) throw new Error('Não encontramos uma conta com esse usuário.');
+        const { error } = await supabase.from('solicitacoes_redefinicao_senha_clinica').insert({
+          cliente_clinica_id: client.id,
+          password_preference: preference?.trim() || null
+        });
+        if (error) throw error;
+      },
+
+      loadPasswordResetRequests: async () => {
+        if (get().currentUser?.role !== 'master') return;
+        const { data, error } = await supabase.from('solicitacoes_redefinicao_senha_clinica')
+          .select('id, cliente_clinica_id, password_preference, status, created_at, clientes_clinica (id, name, username, clinic_name, phone)')
+          .eq('status', 'pendente').order('created_at', { ascending: false });
+        if (error) throw error;
+        set({ passwordResetRequests: data || [] });
+      },
+
+      loadPasswordResetHistory: async () => {
+        if (get().currentUser?.role !== 'master') return;
+        const { data, error } = await supabase.from('acessos_suporte_clinica')
+          .select('id, cliente_clinica_id, created_at, clientes_clinica!acessos_suporte_clinica_cliente_clinica_id_fkey (name, username, clinic_name)')
+          .eq('action', 'reset_password').order('created_at', { ascending: false }).limit(10);
+        if (error) throw error;
+        set({ passwordResetHistory: data || [] });
+      },
+
+      resolvePasswordResetRequest: async (requestId) => {
+        const { error } = await supabase.from('solicitacoes_redefinicao_senha_clinica')
+          .update({ status: 'atendido', resolved_at: new Date().toISOString() }).eq('id', requestId);
+        if (error) throw error;
+        set(state => ({ passwordResetRequests: state.passwordResetRequests.filter(request => request.id !== requestId) }));
       },
 
       registerClient: async (name, username, password, phone) => {
@@ -967,6 +1089,10 @@ export const useStore = create<ClinicState>()(
       logoutClient: () => {
         set({
           currentClient: null,
+          masterClient: null,
+          supportClients: [],
+          passwordResetRequests: [],
+          passwordResetHistory: [],
           clinicName: 'clínica stark',
           clinicType: 'estética',
           productMode: 'full',

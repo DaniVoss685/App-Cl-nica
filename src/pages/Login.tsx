@@ -21,11 +21,16 @@ import { motion, AnimatePresence } from 'motion/react';
 export function Login() {
   const loginClient = useStore(state => state.loginClient);
   const registerClient = useStore(state => state.registerClient);
+  const requestPasswordReset = useStore(state => state.requestPasswordReset);
   
   const [isRegister, setIsRegister] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showRecoveryNotice, setShowRecoveryNotice] = useState(false);
+  const [recoveryUsername, setRecoveryUsername] = useState('');
+  const [recoveryPreference, setRecoveryPreference] = useState('');
+  const [requestingRecovery, setRequestingRecovery] = useState(false);
   
   const [formData, setFormData] = useState({
     name: '',
@@ -108,6 +113,17 @@ export function Login() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const submitRecoveryRequest = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setRequestingRecovery(true);
+    try {
+      await requestPasswordReset(recoveryUsername, recoveryPreference);
+      toast.success('Pedido enviado ao suporte. Você receberá uma nova senha em breve.');
+      setShowRecoveryNotice(false); setRecoveryUsername(''); setRecoveryPreference('');
+    } catch (error: any) { toast.error(error.message || 'Não foi possível enviar o pedido.'); }
+    finally { setRequestingRecovery(false); }
   };
 
   return (
@@ -325,6 +341,7 @@ export function Login() {
                     : 'Não possui uma conta? Cadastre-se'}
                 </button>
               </div>
+              {!isRegister && <div className="text-center -mt-3"><button type="button" onClick={() => setShowRecoveryNotice(true)} className="text-xs text-slate-400 hover:text-indigo-300 underline underline-offset-4">Esqueci minha senha</button></div>}
 
             </form>
           </Card>
@@ -339,6 +356,7 @@ export function Login() {
 
       {/* Success Modal */}
       <AnimatePresence>
+        {showRecoveryNotice && <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md"><motion.form onSubmit={submitRecoveryRequest} initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-slate-900 border border-slate-800 rounded-[2rem] p-6 max-w-sm w-full shadow-2xl"><div className="w-14 h-14 bg-indigo-500/10 text-indigo-300 rounded-2xl flex items-center justify-center mx-auto mb-4"><KeyRound className="w-7 h-7" /></div><h3 className="text-xl font-bold text-white text-center">Solicitar nova senha</h3><p className="text-slate-400 text-sm mt-2 leading-relaxed text-center">Envie seu pedido para a Central ClinicFlow. Não informe sua senha atual.</p><div className="mt-5 space-y-4"><div><Label className="text-slate-400 uppercase text-[9px] font-bold tracking-[0.2em]">Seu usuário</Label><Input value={recoveryUsername} onChange={e => setRecoveryUsername(e.target.value)} required placeholder="Ex.: minha-clinica" className="mt-2 h-11 bg-slate-800/60 border-slate-700 text-white" /></div><div><Label className="text-slate-400 uppercase text-[9px] font-bold tracking-[0.2em]">Preferência para a senha (opcional)</Label><Input value={recoveryPreference} onChange={e => setRecoveryPreference(e.target.value)} maxLength={120} placeholder="Ex.: fácil de lembrar, com números" className="mt-2 h-11 bg-slate-800/60 border-slate-700 text-white" /><p className="text-[11px] text-slate-500 mt-1.5">Não escreva uma senha desejada; informe apenas uma preferência.</p></div></div><div className="flex gap-2 mt-6"><button type="button" onClick={() => setShowRecoveryNotice(false)} className="h-11 px-4 text-slate-300 font-semibold">Cancelar</button><button disabled={requestingRecovery} type="submit" className="flex-1 h-11 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl disabled:opacity-50">{requestingRecovery ? 'Enviando...' : 'Enviar pedido'}</button></div></motion.form></div>}
         {showSuccessModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
             <motion.div

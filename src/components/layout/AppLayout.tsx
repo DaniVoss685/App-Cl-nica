@@ -4,10 +4,17 @@ import { Outlet } from 'react-router-dom';
 import { GlobalArrivalModal } from '../modals/GlobalArrivalModal';
 import { GlobalCheckoutModal } from '../modals/GlobalCheckoutModal';
 import { OnboardingTour } from '../OnboardingTour';
+import { ShieldCheck, Undo2 } from 'lucide-react';
+import { useStore } from '../../store';
+import { useNavigate } from 'react-router-dom';
 
 export function AppLayout() {
+  const { currentUser, currentClient, masterClient, exitSupportSession } = useStore();
+  const navigate = useNavigate();
+  const isSupportSession = currentUser?.role === 'master' && masterClient?.id && currentClient?.id !== masterClient.id;
   return (
     <div className="flex h-dvh w-full bg-slate-50 font-sans text-slate-900 overflow-hidden">
+      {isSupportSession && <div className="fixed top-0 inset-x-0 z-[100] bg-amber-400 text-amber-950 text-xs font-semibold px-4 py-2 flex items-center justify-center gap-3"><ShieldCheck className="w-4 h-4"/> Você está em modo suporte: {currentClient?.clinicName || currentClient?.name}<button onClick={async () => { await exitSupportSession(); navigate('/central-clientes'); }} className="inline-flex items-center gap-1 rounded bg-amber-950 text-white px-2 py-1 hover:bg-black"><Undo2 className="w-3 h-3"/> Voltar à Central</button></div>}
       <GlobalArrivalModal />
       <GlobalCheckoutModal />
       <OnboardingTour />

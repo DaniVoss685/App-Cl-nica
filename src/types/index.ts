@@ -230,7 +230,7 @@ export interface Budget {
   status: 'pendente' | 'enviado' | 'aprovado' | 'recusado';
 }
 
-export type UserRole = 'admin' | 'recepção' | 'profissional';
+export type UserRole = 'admin' | 'master' | 'recepção' | 'profissional';
 
 export interface User {
   id: string;

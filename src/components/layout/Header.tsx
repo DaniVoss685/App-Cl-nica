@@ -1,6 +1,8 @@
 import { Bell, Menu, Search, Upload, HelpCircle, LogOut } from 'lucide-react';
 import { useStore } from '../../store';
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '../../lib/supabase';
 
 export function Header() {
   const clinicName = useStore(state => state.clinicName);
@@ -10,8 +12,21 @@ export function Header() {
   const currentClient = useStore(state => state.currentClient);
   const currentUser = useStore(state => state.currentUser);
   const logoutClient = useStore(state => state.logoutClient);
+  const passwordResetRequests = useStore(state => state.passwordResetRequests);
+  const loadPasswordResetRequests = useStore(state => state.loadPasswordResetRequests);
   const unresolvedInsights = insights.filter(i => !i.resolved).length;
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (currentUser?.role !== 'master') return;
+    loadPasswordResetRequests();
+    const channel = supabase.channel('master-reset-bell')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'solicitacoes_redefinicao_senha_clinica' }, () => loadPasswordResetRequests())
+      .subscribe();
+    const timer = window.setInterval(() => loadPasswordResetRequests(), 20000);
+    return () => { window.clearInterval(timer); supabase.removeChannel(channel); };
+  }, [currentUser?.role, loadPasswordResetRequests]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -56,10 +71,10 @@ export function Header() {
           <span className="hidden lg:inline text-slate-500 hover:text-indigo-650">Dúvidas?</span>
         </button>
 
-        <button className="relative p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-50 transition-colors">
+        <button onClick={() => currentUser?.role === 'master' && navigate('/central-clientes')} className="relative p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-50 transition-colors" title={currentUser?.role === 'master' ? 'Ver pedidos de senha' : 'Notificações'}>
           <Bell className="h-5 w-5" />
-          {unresolvedInsights > 0 && (
-            <span className="absolute top-1.5 right-1.5 block h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />
+          {(unresolvedInsights > 0 || passwordResetRequests.length > 0) && (
+            <span className="absolute -top-0.5 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-500 ring-2 ring-white text-[9px] leading-4 text-white font-bold text-center">{currentUser?.role === 'master' ? passwordResetRequests.length : ''}</span>
           )}
         </button>
         

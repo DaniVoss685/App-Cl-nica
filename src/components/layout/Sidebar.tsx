@@ -1,4 +1,4 @@
-import { LayoutDashboard, CalendarDays, Users, Stethoscope, Package, Clock, DollarSign, Sparkles, PieChart, UserCog, Settings, HelpCircle, Target, FileText, ClipboardList, ChevronLeft, ChevronRight, MessageSquare, Calculator, Globe, CheckSquare } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Users, Stethoscope, Package, Clock, DollarSign, Sparkles, PieChart, UserCog, Settings, HelpCircle, Target, FileText, ClipboardList, ChevronLeft, ChevronRight, MessageSquare, Calculator, Globe, CheckSquare, ShieldCheck } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { useStore } from '../../store';
@@ -124,7 +124,7 @@ export function Sidebar() {
     if (!currentUser) return false;
     const allowedNavigation = getAllowedNavigation();
     if (!allowedNavigation.includes('*') && !allowedNavigation.includes(itemName)) return false;
-    if (currentUser.role === 'admin') return true;
+    if (currentUser.role === 'admin' || currentUser.role === 'master') return true;
     
     const normalizedName = itemName.toLowerCase().trim();
     
@@ -147,6 +147,7 @@ export function Sidebar() {
   const filteredPrincipal = principalNavigation.filter(item => checkPermission(item.name));
   const filteredOperacao = operacaoNavigation.filter(item => checkPermission(item.name));
   const filteredGestao = gestaoNavigation.filter(item => checkPermission(item.name));
+  const isMaster = currentUser?.role === 'master';
 
   const startTimer = () => {
     if (isManual || isCollapsed) return;
@@ -218,6 +219,7 @@ export function Sidebar() {
         <div className="space-y-1">
           {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Gestão</div>}
           {filteredGestao.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />)}
+          {isMaster && <NavItem item={{ name: 'Central de Clientes', href: '/central-clientes', icon: ShieldCheck, color: 'text-indigo-600' }} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />}
         </div>
       </nav>
 

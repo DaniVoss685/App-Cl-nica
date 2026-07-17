@@ -25,6 +25,7 @@ import { Toaster } from 'sonner';
 import { Configuracoes } from './pages/Configuracoes';
 import { GuiaImplantacao } from './pages/GuiaImplantacao';
 import { TestingTutorial } from './pages/TestingTutorial';
+import { CentralClientes } from './pages/CentralClientes';
 
 // Placeholder pages for those not yet implemented
 const Placeholder = ({ name }: { name: string }) => (
@@ -52,6 +53,7 @@ export default function App() {
   const isOnboarded = useStore(state => state.isOnboarded);
   const productMode = useStore(state => state.productMode);
   const canAccessRoute = useStore(state => state.canAccessRoute);
+  const currentUser = useStore(state => state.currentUser);
   const syncFromSupabase = useStore(state => state.syncFromSupabase);
 
   useEffect(() => {
@@ -98,6 +100,7 @@ export default function App() {
             <Route path="/configuracoes" element={guardRoute('/configuracoes', <Configuracoes />)} />
             <Route path="/guia" element={guardRoute('/guia', <GuiaImplantacao />)} />
             <Route path="/testes" element={guardRoute('/testes', <TestingTutorial />)} />
+            <Route path="/central-clientes" element={currentUser?.role === 'master' ? <CentralClientes /> : <Navigate to="/" replace />} />
           </Route>
           <Route path="/agendamento-online" element={guardRoute('/agendamento-online', <AgendamentoOnline />)} />
           <Route path="*" element={<Navigate to={productMode === 'financeiro' ? '/financeiro' : '/'} replace />} />
