@@ -4,6 +4,7 @@ import { clsx } from 'clsx';
 import { useStore } from '../../store';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { supabase } from '../../lib/supabase';
 
 const principalNavigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -34,7 +35,7 @@ const gestaoNavigation = [
   { name: 'Guia de Implantação', href: '/guia', icon: HelpCircle },
 ];
 
-const NavItem = ({ item, isCollapsed, pathname, search, unresolvedInsights, pendingConfirmations }: { item: any, isCollapsed: boolean, pathname: string, search: string, unresolvedInsights: number, pendingConfirmations: number }) => {
+const NavItem = ({ item, isCollapsed, pathname, search, unresolvedInsights, pendingConfirmations, passwordResetCount = 0 }: { item: any, isCollapsed: boolean, pathname: string, search: string, unresolvedInsights: number, pendingConfirmations: number, passwordResetCount?: number }) => {
   const isActive = useMemo(() => {
     // If the sidebar item URL has tab params
     const tabMatch = item.href.match(/[?&]tab=([^&]+)/);
@@ -87,6 +88,14 @@ const NavItem = ({ item, isCollapsed, pathname, search, unresolvedInsights, pend
           {pendingConfirmations}
         </span>
       )}
+      {item.name === 'Central de Clientes' && passwordResetCount > 0 && (
+        <span className={clsx(
+          "bg-red-600 text-white text-[10px] px-2 py-0.5 rounded-full font-black animate-pulse shadow-sm shadow-red-200",
+          isCollapsed ? "absolute -top-1 -right-1" : "ml-auto"
+        )}>
+          {passwordResetCount}
+        </span>
+      )}
     </Link>
   );
 };
@@ -98,7 +107,23 @@ export function Sidebar() {
   const getAllowedNavigation = useStore(state => state.getAllowedNavigation);
   const insights = useStore(state => state.insights);
   const appointments = useStore(state => state.appointments);
+  const passwordResetRequests = useStore(state => state.passwordResetRequests);
+  const loadPasswordResetRequests = useStore(state => state.loadPasswordResetRequests);
+  const masterClient = useStore(state => state.masterClient);
+  const isMaster = !!masterClient || currentUser?.role === 'master';
   const unresolvedInsights = insights.filter(i => !i.resolved).length;
+
+  useEffect(() => {
+    if (!isMaster) return;
+    loadPasswordResetRequests();
+    const channel = supabase.channel('sidebar-reset-requests')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'solicitacoes_redefinicao_senha_clinica' }, () => {
+        loadPasswordResetRequests();
+      })
+      .subscribe();
+    const timer = window.setInterval(() => loadPasswordResetRequests(), 15000);
+    return () => { window.clearInterval(timer); supabase.removeChannel(channel); };
+  }, [isMaster, loadPasswordResetRequests]);
 
   // Contagem de confirmações pendentes nos próximos 30 dias
   const pendingConfirmations = useMemo(() => {
@@ -147,7 +172,7 @@ export function Sidebar() {
   const filteredPrincipal = principalNavigation.filter(item => checkPermission(item.name));
   const filteredOperacao = operacaoNavigation.filter(item => checkPermission(item.name));
   const filteredGestao = gestaoNavigation.filter(item => checkPermission(item.name));
-  const isMaster = currentUser?.role === 'master';
+  const canOpenImplementationGuide = checkPermission('Guia de Implantação');
 
   const startTimer = () => {
     if (isManual || isCollapsed) return;
@@ -206,25 +231,31 @@ export function Sidebar() {
       </div>
       
       <nav className="flex-1 p-4 space-y-6 overflow-y-auto overflow-x-hidden transition-all duration-300">
-        <div className="space-y-1">
-          {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Principal</div>}
-          {filteredPrincipal.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />)}
-        </div>
+        {filteredPrincipal.length > 0 && (
+          <div className="space-y-1">
+            {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Principal</div>}
+            {filteredPrincipal.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />)}
+          </div>
+        )}
         
-        <div className="space-y-1">
-          {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Operação</div>}
-          {filteredOperacao.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />)}
-        </div>
+        {filteredOperacao.length > 0 && (
+          <div className="space-y-1">
+            {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Operação</div>}
+            {filteredOperacao.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />)}
+          </div>
+        )}
         
-        <div className="space-y-1">
-          {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Gestão</div>}
-          {filteredGestao.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />)}
-          {isMaster && <NavItem item={{ name: 'Central de Clientes', href: '/central-clientes', icon: ShieldCheck, color: 'text-indigo-600' }} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />}
-        </div>
+        {(filteredGestao.length > 0 || isMaster) && (
+          <div className="space-y-1">
+            {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-slate-400 tracking-wider uppercase">Gestão</div>}
+            {filteredGestao.map((item) => <NavItem key={item.name} item={item} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} />)}
+            {isMaster && <NavItem item={{ name: 'Central de Clientes', href: '/central-clientes', icon: ShieldCheck, color: 'text-indigo-600' }} isCollapsed={isCollapsed} pathname={pathname} search={search} unresolvedInsights={unresolvedInsights} pendingConfirmations={pendingConfirmations} passwordResetCount={passwordResetRequests.length} />}
+          </div>
+        )}
       </nav>
 
       <AnimatePresence>
-        {!isCollapsed && (
+        {!isCollapsed && canOpenImplementationGuide && (
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}

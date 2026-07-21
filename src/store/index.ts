@@ -25,7 +25,8 @@ import {
   DoctorNote,
   BeforeAfterPhoto,
   DeductibleCategory,
-  ProductMode
+  ProductMode,
+  ReceiptData
 } from '../types';
 
 // ── WhatsApp types ────────────────────────────────────────────────────────────
@@ -56,6 +57,15 @@ export interface WaMessage {
 
 interface ClinicState {
   clinicName: string;
+  clinicRazaoSocial: string;
+  clinicCnpj: string;
+  clinicPhone: string;
+  clinicAddress: string;
+  clinicProfessionalName: string;
+  clinicProfessionalCpf: string;
+  clinicProfessionalRegistro: string;
+  clinicProfessionalSignature?: string;
+  receiptNextNumber?: number;
 
   clinicType: string;
   productMode: ProductMode;
@@ -91,7 +101,21 @@ interface ClinicState {
   setSidebarCollapsed: (collapsed: boolean) => void;
   setOnboarded: (data: { name: string; type: string; activateAI: boolean }) => Promise<void>;
   setClinicName: (name: string) => void;
+  setClinicProfile: (profile: Partial<{
+    clinicName: string;
+    clinicRazaoSocial: string;
+    clinicCnpj: string;
+    clinicPhone: string;
+    clinicAddress: string;
+    clinicProfessionalName?: string;
+    clinicProfessionalCpf?: string;
+    clinicProfessionalRegistro?: string;
+    clinicProfessionalSignature?: string;
+    receiptNextNumber?: number;
+  }>) => void;
+  createReceipt: (receipt: ReceiptData) => Document;
   setProductMode: (mode: ProductMode) => Promise<void>;
+  updateClientProductMode: (clientId: string, mode: ProductMode) => Promise<void>;
 
   // Auth state & actions
   currentClient: any | null;
@@ -103,6 +127,8 @@ interface ClinicState {
   exitSupportSession: () => Promise<void>;
   resetClientPassword: (clientId: string, newPassword: string) => Promise<void>;
   requestPasswordReset: (username: string, preference?: string) => Promise<void>;
+  checkPasswordResetStatus: (username: string) => Promise<{ status: 'pending' | 'completed'; requestId?: string; message: string; createdAt?: string; resolvedAt?: string } | null>;
+  acknowledgePasswordReset: (username: string, requestId?: string) => Promise<void>;
   passwordResetRequests: any[];
   passwordResetHistory: any[];
   loadPasswordResetRequests: () => Promise<void>;
@@ -288,6 +314,15 @@ const normalizeProductMode = (value?: string): ProductMode => {
   return value === 'financeiro' ? 'financeiro' : 'full';
 };
 
+const CARNE_LEAO_ADMIN_NAVIGATION = ['Financeiro', 'Pacientes', 'Equipe', 'Serviços', 'Custos e Preços', 'Configurações'];
+const CARNE_LEAO_TEAM_NAVIGATION = ['Financeiro', 'Pacientes', 'Equipe'];
+
+const getCarneLeaoNavigation = (user: User | null) => {
+  return user?.role === 'admin' || user?.role === 'master'
+    ? CARNE_LEAO_ADMIN_NAVIGATION
+    : CARNE_LEAO_TEAM_NAVIGATION;
+};
+
 const mockInsights: AIInsight[] = [
   {
     id: '1',
@@ -321,6 +356,15 @@ export const useStore = create<ClinicState>()(
   persist(
     (set, get) => ({
       clinicName: 'clínica stark',
+      clinicRazaoSocial: '',
+      clinicCnpj: '',
+      clinicPhone: '',
+      clinicAddress: '',
+      clinicProfessionalName: '',
+      clinicProfessionalCpf: '',
+      clinicProfessionalRegistro: '',
+      clinicProfessionalSignature: '',
+      receiptNextNumber: 1226,
       clinicType: 'estética',
       productMode: 'full',
       profilePicture: null,
@@ -386,20 +430,18 @@ export const useStore = create<ClinicState>()(
       canAccessRoute: (path) => {
         const { productMode, currentUser } = get();
         if (productMode !== 'financeiro') return true;
-        return path === '/' ||
-          path.startsWith('/financeiro') ||
-          path.startsWith('/pacientes') ||
-          path.startsWith('/equipe') ||
-          path.startsWith('/servicos') ||
-          path.startsWith('/custos') ||
-          ((currentUser?.role === 'admin' || currentUser?.role === 'master') && path.startsWith('/configuracoes'));
+        if (path === '/') return true;
+
+        const allowedPaths = currentUser?.role === 'admin' || currentUser?.role === 'master'
+          ? ['/financeiro', '/pacientes', '/equipe', '/servicos', '/custos', '/configuracoes']
+          : ['/financeiro', '/pacientes', '/equipe'];
+
+        return allowedPaths.some(allowedPath => path === allowedPath || path.startsWith(`${allowedPath}/`));
       },
       getAllowedNavigation: () => {
         const { productMode, currentUser } = get();
         if (productMode !== 'financeiro') return ['*'];
-        return currentUser?.role === 'admin' || currentUser?.role === 'master'
-          ? ['Financeiro', 'Pacientes', 'Equipe', 'Serviços', 'Custos e Preços', 'Configurações']
-          : ['Financeiro', 'Pacientes', 'Equipe'];
+        return getCarneLeaoNavigation(currentUser);
       },
       setEvolutionConfig: (url, key, instance) => set({ evolutionApiUrl: url.trim(), evolutionApiKey: key.trim(), evolutionInstance: instance.trim() }),
       setWhatsappConnected: (connected) => set({ whatsappConnected: connected }),
@@ -885,7 +927,7 @@ export const useStore = create<ClinicState>()(
           }
 
           const client = toCamelCase(dataClient);
-          const productMode = normalizeProductMode(client.productMode);
+          const productMode = normalizeProductMode(client.productMode || dataClient.product_mode);
 
           if (isEmployee && employeeData) {
             const emp = toCamelCase(employeeData);
@@ -945,11 +987,19 @@ export const useStore = create<ClinicState>()(
         if (get().currentUser?.role !== 'master') return;
         const { data, error } = await supabase
           .from('clientes_clinica')
-          .select('id, name, username, phone, clinic_name, clinic_type, is_onboarded, created_at')
+          .select('*')
           .neq('account_role', 'master')
           .order('created_at', { ascending: false });
         if (error) throw error;
-        set({ supportClients: (data || []).map(toCamelCase) });
+        set({
+          supportClients: (data || []).map(c => {
+            const camel = toCamelCase(c);
+            return {
+              ...camel,
+              productMode: normalizeProductMode(camel.productMode || c.product_mode)
+            };
+          })
+        });
       },
 
       enterSupportSession: async (targetClient) => {
@@ -1018,6 +1068,89 @@ export const useStore = create<ClinicState>()(
           password_preference: preference?.trim() || null
         });
         if (error) throw error;
+      },
+
+      checkPasswordResetStatus: async (username) => {
+        if (!username || !username.trim()) return null;
+        const normalized = username.trim().toLowerCase().replace(/^@/, '');
+
+        const ackKey = 'clinicflow_acknowledged_resets';
+        let ackList: string[] = [];
+        try {
+          ackList = JSON.parse(localStorage.getItem(ackKey) || '[]');
+        } catch {}
+
+        try {
+          const { data: client } = await supabase.from('clientes_clinica')
+            .select('id, username').eq('username', normalized).maybeSingle();
+
+          if (!client) return null;
+
+          const { data: pending } = await supabase.from('solicitacoes_redefinicao_senha_clinica')
+            .select('id, created_at, status')
+            .eq('cliente_clinica_id', client.id)
+            .eq('status', 'pendente')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (pending) {
+            return {
+              status: 'pending',
+              requestId: pending.id,
+              message: 'Solicitação de nova senha em análise pelo Contaju. Aguarde a liberação.',
+              createdAt: pending.created_at
+            };
+          }
+
+          const { data: resolved } = await supabase.from('solicitacoes_redefinicao_senha_clinica')
+            .select('id, resolved_at')
+            .eq('cliente_clinica_id', client.id)
+            .eq('status', 'atendido')
+            .order('resolved_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (resolved && !ackList.includes(resolved.id) && !ackList.includes(normalized)) {
+            return {
+              status: 'completed',
+              requestId: resolved.id,
+              message: 'Sua senha foi redefinida com sucesso pelo Contaju! Utilize a nova senha.',
+              resolvedAt: resolved.resolved_at
+            };
+          }
+
+          return null;
+        } catch (e) {
+          console.error('Erro ao verificar status de redefinição de senha:', e);
+          return null;
+        }
+      },
+
+      acknowledgePasswordReset: async (username, requestId) => {
+        if (!username) return;
+        const normalized = username.trim().toLowerCase().replace(/^@/, '');
+        const ackKey = 'clinicflow_acknowledged_resets';
+        let list: string[] = [];
+        try {
+          list = JSON.parse(localStorage.getItem(ackKey) || '[]');
+        } catch {}
+
+        if (requestId && !list.includes(requestId)) list.push(requestId);
+        if (!list.includes(normalized)) list.push(normalized);
+
+        try {
+          localStorage.setItem(ackKey, JSON.stringify(list));
+        } catch {}
+
+        if (requestId) {
+          try {
+            await supabase
+              .from('solicitacoes_redefinicao_senha_clinica')
+              .update({ acknowledged: true })
+              .eq('id', requestId);
+          } catch {}
+        }
       },
 
       loadPasswordResetRequests: async () => {
@@ -1186,6 +1319,26 @@ export const useStore = create<ClinicState>()(
 
       syncFromSupabase: async (clientId) => {
         try {
+          try {
+            const { data: updatedClient } = await supabase
+              .from('clientes_clinica')
+              .select('*')
+              .eq('id', clientId)
+              .maybeSingle();
+
+            if (updatedClient) {
+              const camelClient = toCamelCase(updatedClient);
+              const pMode = normalizeProductMode(camelClient.productMode || updatedClient.product_mode);
+              set(state => ({
+                currentClient: camelClient,
+                productMode: pMode,
+                clinicName: camelClient.clinicName || state.clinicName
+              }));
+            }
+          } catch (clientSyncErr) {
+            console.warn('Erro ao atualizar dados da clinica no syncFromSupabase:', clientSyncErr);
+          }
+
           const localPatients = get().patients || [];
           const localAppointments = get().appointments || [];
           const localServices = get().services || [];
@@ -1686,23 +1839,146 @@ export const useStore = create<ClinicState>()(
       },
 
       setClinicName: (name) => set({ clinicName: name }),
+      setClinicProfile: (profile) => {
+        set((state) => ({
+          clinicName: profile.clinicName !== undefined ? profile.clinicName : state.clinicName,
+          clinicRazaoSocial: profile.clinicRazaoSocial !== undefined ? profile.clinicRazaoSocial : state.clinicRazaoSocial,
+          clinicCnpj: profile.clinicCnpj !== undefined ? profile.clinicCnpj : state.clinicCnpj,
+          clinicPhone: profile.clinicPhone !== undefined ? profile.clinicPhone : state.clinicPhone,
+          clinicAddress: profile.clinicAddress !== undefined ? profile.clinicAddress : state.clinicAddress,
+          clinicProfessionalName: profile.clinicProfessionalName !== undefined ? profile.clinicProfessionalName : state.clinicProfessionalName,
+          clinicProfessionalCpf: profile.clinicProfessionalCpf !== undefined ? profile.clinicProfessionalCpf : state.clinicProfessionalCpf,
+          clinicProfessionalRegistro: profile.clinicProfessionalRegistro !== undefined ? profile.clinicProfessionalRegistro : state.clinicProfessionalRegistro,
+          clinicProfessionalSignature: profile.clinicProfessionalSignature !== undefined ? profile.clinicProfessionalSignature : state.clinicProfessionalSignature,
+          receiptNextNumber: profile.receiptNextNumber !== undefined ? profile.receiptNextNumber : state.receiptNextNumber,
+        }));
+
+        const { currentClient } = get();
+        if (currentClient?.id) {
+          try {
+            supabase
+              .from('clientes_clinica')
+              .update({
+                clinic_name: profile.clinicName,
+                razao_social: profile.clinicRazaoSocial,
+                cnpj: profile.clinicCnpj,
+                phone: profile.clinicPhone,
+                address: profile.clinicAddress,
+                professional_name: profile.clinicProfessionalName,
+                professional_cpf: profile.clinicProfessionalCpf,
+                professional_registro: profile.clinicProfessionalRegistro
+              })
+              .eq('id', currentClient.id)
+              .then(({ error }) => {
+                if (error) console.log('Aviso/Status sync perfil clínica:', error?.message);
+              });
+          } catch (e) {
+            console.error('Erro ao atualizar perfil da clínica:', e);
+          }
+        }
+      },
+      createReceipt: (receiptData) => {
+        const documentId = generateUUID();
+        
+        // Auto-increment receipt number
+        set((state) => ({
+          receiptNextNumber: (state.receiptNextNumber || 1226) + 1
+        }));
+
+        // Link with existing financial transaction, OR auto-create revenue if unlinked
+        let finId = receiptData.financialTransactionId;
+        if (!finId && receiptData.amount > 0) {
+          const newFinId = generateUUID();
+          const newTx: FinancialTransaction = {
+            id: newFinId,
+            type: 'receita',
+            category: 'Atendimento / Recibo',
+            amount: receiptData.amount,
+            description: `Recibo Nº ${receiptData.number} - ${receiptData.patientName}`,
+            dueDate: receiptData.date,
+            paymentDate: receiptData.date,
+            status: 'pago',
+            patientId: receiptData.patientId,
+            paymentMethod: (receiptData.paymentMethod as any) || 'pix',
+            fiscalDocumentType: 'recibo',
+            fiscalDocumentNumber: receiptData.number,
+            fiscalDocumentDate: receiptData.date
+          };
+          finId = newFinId;
+          set((state) => ({ finance: [newTx, ...state.finance] }));
+          get().syncToSupabase('transacoes_financeiras', newTx, 'insert');
+        }
+
+        const finalReceiptData: ReceiptData = {
+          ...receiptData,
+          financialTransactionId: finId,
+          professionalSignature: receiptData.professionalSignature || get().clinicProfessionalSignature
+        };
+
+        const newDocument: Document = {
+          id: documentId,
+          patientId: receiptData.patientId,
+          name: `Recibo Nº ${receiptData.number} - ${receiptData.patientName}`,
+          type: 'recibo',
+          date: receiptData.date,
+          status: 'gerado',
+          fiscalDocumentType: 'recibo',
+          fiscalDocumentNumber: receiptData.number,
+          amount: receiptData.amount,
+          financialTransactionId: finId,
+          receiptData: { ...finalReceiptData, id: documentId }
+        };
+
+        set((state) => ({ documents: [newDocument, ...state.documents] }));
+        get().syncToSupabase('documentos_clinica', newDocument, 'insert');
+
+        if (finId) {
+          const tx = get().finance.find(f => f.id === finId);
+          if (tx) {
+            get().updateFinance(tx.id, {
+              fiscalDocumentType: 'recibo',
+              fiscalDocumentNumber: receiptData.number,
+              fiscalDocumentDate: receiptData.date,
+              fiscalAttachmentName: `Recibo_${receiptData.number}.pdf`
+            });
+          }
+        }
+
+        return newDocument;
+      },
       setProductMode: async (mode) => {
         const { currentClient } = get();
+        if (!currentClient?.id) {
+          set({ productMode: mode });
+          return;
+        }
+
+        const { error } = await supabase
+          .from('clientes_clinica')
+          .update({ product_mode: mode })
+          .eq('id', currentClient.id);
+
+        if (error) throw error;
+
         set({
           productMode: mode,
-          currentClient: currentClient ? { ...currentClient, productMode: mode } : currentClient
+          currentClient: { ...currentClient, productMode: mode, product_mode: mode }
         });
+      },
+      updateClientProductMode: async (clientId, mode) => {
+        const { currentClient } = get();
+        const { error } = await supabase
+          .from('clientes_clinica')
+          .update({ product_mode: mode })
+          .eq('id', clientId);
 
-        if (!currentClient?.id) return;
+        if (error) throw error;
 
-        try {
-          await supabase
-            .from('clientes_clinica')
-            .update({ product_mode: mode })
-            .eq('id', currentClient.id);
-        } catch (e) {
-          console.error('Erro ao atualizar modo do produto:', e);
-        }
+        set((state) => ({
+          supportClients: state.supportClients.map(c => c.id === clientId ? { ...c, productMode: mode, product_mode: mode } : c),
+          currentClient: currentClient?.id === clientId ? { ...currentClient, productMode: mode, product_mode: mode } : currentClient,
+          productMode: currentClient?.id === clientId ? mode : state.productMode
+        }));
       },
       setProfilePicture: (pic) => set({ profilePicture: pic }),
       setFinanceConfig: (pix, bank, account) => set({ pixKey: pix, bankName: bank, bankAccount: account }),

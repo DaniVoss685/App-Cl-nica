@@ -27,7 +27,8 @@ import {
   ShieldAlert,
   Package,
   Sparkles,
-  Loader2
+  Loader2,
+  Receipt
 } from 'lucide-react';
 import { useStore } from '../store';
 import { format } from 'date-fns';
@@ -35,6 +36,7 @@ import { Badge } from './ui/badge';
 import { Card } from './ui/card';
 import { cn } from '../lib/utils';
 import { FinanceModal } from './FinanceModal';
+import { ReceiptModal } from './ReceiptModal';
 import { ClinicalRecordWorkspace } from './ClinicalRecordWorkspace';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
@@ -247,6 +249,7 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
   }, [isOpen, patientId]);
 
   const [isFinanceModalOpen, setIsFinanceModalOpen] = useState(false);
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [isNewInteractionModalOpen, setIsNewInteractionModalOpen] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [aiReport, setAiReport] = useState<string | null>(null);
@@ -378,7 +381,8 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
     .sort((a, b) => b.date.localeCompare(a.date)) : [];
 
   return (
-    <Dialog open={isOpen} onOpenChange={onOpenChange => !onOpenChange && onClose()}>
+    <>
+      <Dialog open={isOpen} onOpenChange={onOpenChange => !onOpenChange && onClose()}>
       <DialogContent showCloseButton={true} className="max-w-none sm:max-w-none md:max-w-none lg:max-w-none xl:max-w-none w-screen h-screen m-0 rounded-none p-0 overflow-hidden bg-white border-none focus:outline-none shadow-2xl">
         {isNew ? (
           <div className="flex flex-col h-full bg-white p-6 md:p-12 overflow-y-auto no-scrollbar">
@@ -1088,12 +1092,21 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
                     <div className="space-y-4">
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="font-black text-slate-900 italic">Histórico de Cobranças</h3>
-                        <Button 
-                          onClick={() => setIsFinanceModalOpen(true)}
-                          className="h-9 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 font-bold text-[10px] italic shadow-lg shadow-emerald-100"
-                        >
-                          Lançar Pagamento
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button 
+                            onClick={() => setIsReceiptModalOpen(true)}
+                            className="h-9 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-[10px] italic shadow-lg shadow-indigo-100 flex items-center gap-1.5"
+                          >
+                            <Receipt className="w-3.5 h-3.5" />
+                            Emitir Recibo
+                          </Button>
+                          <Button 
+                            onClick={() => setIsFinanceModalOpen(true)}
+                            className="h-9 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 font-bold text-[10px] italic shadow-lg shadow-emerald-100"
+                          >
+                            Lançar Pagamento
+                          </Button>
+                        </div>
                       </div>
 
                       {patientFinance.length === 0 ? (
@@ -1482,6 +1495,7 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
           </div>
         )}
       </DialogContent>
+    </Dialog>
       
       {/* Finance Modal Integration */}
       <FinanceModal 
@@ -1591,6 +1605,12 @@ export function PatientModal({ isOpen, onClose, patientId, onSelectPatient, init
           </div>
         </DialogContent>
       </Dialog>
-    </Dialog>
+
+      <ReceiptModal 
+        isOpen={isReceiptModalOpen}
+        onClose={() => setIsReceiptModalOpen(false)}
+        initialPatientId={patientId || undefined}
+      />
+    </>
   );
 }

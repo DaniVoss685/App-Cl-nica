@@ -25,7 +25,8 @@ import {
   X,
   FileDown,
   Eye,
-  AlertTriangle
+  AlertTriangle,
+  Receipt
 } from 'lucide-react';
 import { 
   DropdownMenu, 
@@ -43,11 +44,13 @@ import {
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { FileItem } from '../types';
+import { ReceiptModal } from '../components/ReceiptModal';
 
 export function Documentos() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
 
   // Core management states from store
   const { 
@@ -518,6 +521,13 @@ export function Documentos() {
           <p className="text-slate-500">Gestão Documental, Modelos, Orçamentos e Recibos em PDF, Word ou Excel.</p>
         </div>
         <div className="flex items-center gap-3">
+          <Button 
+            onClick={() => setIsReceiptModalOpen(true)}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs h-11 shadow-lg shadow-emerald-100 transition-all flex items-center gap-2"
+          >
+            <Receipt className="w-4 h-4" />
+            Emitir Recibo
+          </Button>
           <Button 
             id="onboarding-btn-new-folder"
             onClick={() => setIsFolderModalOpen(true)}
@@ -1360,6 +1370,11 @@ export function Documentos() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ReceiptModal
+        isOpen={isReceiptModalOpen}
+        onClose={() => setIsReceiptModalOpen(false)}
+      />
     </motion.div>
   );
 }

@@ -29,6 +29,7 @@ import {
   MinusCircle,
   Pencil,
   PlusCircle,
+  Printer,
   Receipt,
   Search,
   Send,
@@ -52,7 +53,7 @@ import {
 import { toast } from 'sonner';
 
 import { useStore } from '../store';
-import type { Document as ClinicDocument, FinancialTransaction } from '../types';
+import type { Document as ClinicDocument, FinancialTransaction, ReceiptData } from '../types';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import {
@@ -62,6 +63,7 @@ import {
   DropdownMenuTrigger
 } from '../components/ui/dropdown-menu';
 import { FinanceModal } from '../components/FinanceModal';
+import { ReceiptModal } from '../components/ReceiptModal';
 import {
   Dialog,
   DialogContent,
@@ -73,7 +75,7 @@ import {
 import { cn } from '../lib/utils';
 import { readFinanceAuditEntries } from '../lib/financeAudit';
 
-type FinanceTab = 'overview' | 'receitas' | 'despesas' | 'carne';
+type FinanceTab = 'overview' | 'receitas' | 'despesas' | 'carne' | 'recibos';
 type QuickRange = 'hoje' | 'semana' | 'mes' | '30' | '90' | 'todos';
 type CalendarMode = 'dia' | 'semana' | 'mes';
 type ScenarioKey = 'conservador' | 'realista' | 'otimista';
@@ -265,7 +267,8 @@ const tabConfig: Array<{ id: FinanceTab; label: string; short: string }> = [
   { id: 'overview', label: 'Resumo', short: 'Resumo' },
   { id: 'receitas', label: 'Receitas', short: 'Receitas' },
   { id: 'despesas', label: 'Despesas', short: 'Despesas' },
-  { id: 'carne', label: 'Carnê-Leão', short: 'Carnê' }
+  { id: 'carne', label: 'Carnê-Leão', short: 'Carnê' },
+  { id: 'recibos', label: 'Recibos Emissão', short: 'Recibos' }
 ];
 
 const carneDetailTabs: Array<{ id: CarneDetailTab; label: string; short: string }> = [
@@ -1022,6 +1025,33 @@ export function Financeiro() {
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: SortDirection }>({ key: 'dueDate', direction: 'desc' });
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
+  const [receiptModalProps, setReceiptModalProps] = useState<{
+    patientId?: string;
+    appointmentId?: string;
+    transactionId?: string;
+    amount?: number;
+    description?: string;
+    date?: string;
+    paymentMethod?: string;
+    initialStep?: 'form' | 'print';
+    initialReceipt?: ReceiptData;
+  }>({});
+
+  const handleOpenReceiptModal = (props?: {
+    patientId?: string;
+    appointmentId?: string;
+    transactionId?: string;
+    amount?: number;
+    description?: string;
+    date?: string;
+    paymentMethod?: string;
+    initialStep?: 'form' | 'print';
+    initialReceipt?: ReceiptData;
+  }) => {
+    setReceiptModalProps(props || {});
+    setIsReceiptModalOpen(true);
+  };
   const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
   const [modalDefaultType, setModalDefaultType] = useState<'receita' | 'despesa'>('receita');
   const [transactionToDelete, setTransactionToDelete] = useState<FinancialTransaction | null>(null);
@@ -3919,10 +3949,110 @@ export function Financeiro() {
     </div>
   );
 
+  const renderRecibosView = () => {
+    const receiptDocs = documents.filter(d => d.type === 'recibo' || d.fiscalDocumentType === 'recibo');
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 rounded-3xl p-6 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Receipt className="w-6 h-6 text-indigo-400" />
+              <h2 className="text-xl font-black italic">Emissão e Gestão de Recibos</h2>
+            </div>
+            <p className="text-xs text-indigo-200">
+              Emita recibos válidos com dados da clínica, valor por extenso e conciliação para Carnê-Leão.
+            </p>
+          </div>
+          <Button
+            type="button"
+            onClick={() => handleOpenReceiptModal()}
+            className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs h-11 px-5 rounded-2xl shadow-lg"
+          >
+            <Receipt className="w-4 h-4 mr-2" /> Emitir Novo Recibo
+          </Button>
+        </div>
+
+        {receiptDocs.length === 0 ? (
+          <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center space-y-4">
+            <div className="w-16 h-16 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto">
+              <Receipt className="w-8 h-8" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800">Nenhum Recibo Emitido Ainda</h3>
+            <p className="text-xs text-slate-500 max-w-md mx-auto">
+              Seus recibos emitidos ficarão salvos aqui e nas fichas dos pacientes para consulta e comprovante de imposto de renda.
+            </p>
+            <Button
+              onClick={() => handleOpenReceiptModal()}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-6 py-2 rounded-xl"
+            >
+              Criar Primeiro Recibo
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {receiptDocs.map(doc => {
+              const patient = patients.find(p => p.id === doc.patientId);
+              const receiptNumber = doc.fiscalDocumentNumber || doc.receiptData?.number || '---';
+
+              return (
+                <div key={doc.id} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 hover:shadow-md transition-shadow">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
+                      RECIBO Nº {receiptNumber}
+                    </span>
+                    <span className="text-xs font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                      R$ {doc.amount?.toFixed(2) || '0.00'}
+                    </span>
+                  </div>
+
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">{patient?.name || doc.name}</h4>
+                    {patient?.cpf && (
+                      <p className="text-xs text-slate-500 font-medium">CPF: {patient.cpf}</p>
+                    )}
+                    <p className="text-xs text-slate-400 mt-1">Data: {doc.date}</p>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const rData: ReceiptData = doc.receiptData || {
+                          number: receiptNumber,
+                          patientId: doc.patientId,
+                          patientName: patient?.name || doc.name,
+                          patientCpf: patient?.cpf,
+                          amount: doc.amount || 0,
+                          paymentMethod: 'pix',
+                          date: doc.date,
+                          description: doc.name
+                        };
+                        handleOpenReceiptModal({
+                          initialStep: 'print',
+                          initialReceipt: rData
+                        });
+                      }}
+                      className="text-xs font-bold text-indigo-700 border-indigo-200 hover:bg-indigo-50"
+                    >
+                      <Printer className="w-3.5 h-3.5 mr-1" /> Imprimir / Ver Recibo
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderActiveTab = () => {
     if (activeTab === 'receitas') return renderAccountView('receita');
     if (activeTab === 'despesas') return renderAccountView('despesa');
     if (activeTab === 'carne') return renderCarneLeao();
+    if (activeTab === 'recibos') return renderRecibosView();
     return renderOverview();
   };
 
@@ -3941,6 +4071,10 @@ export function Financeiro() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" onClick={() => handleOpenReceiptModal()} className="h-10 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-sm">
+            <Receipt className="w-4 h-4 mr-2" />
+            Emitir Recibo
+          </Button>
           <Button type="button" variant="outline" onClick={handleExportCSV} className="h-10 rounded-xl text-xs font-bold border-slate-200">
             <Download className="w-4 h-4 mr-2" />
             Exportar CSV
@@ -4431,6 +4565,11 @@ export function Financeiro() {
           </div>
         </DialogContent>
       </Dialog>
+      <ReceiptModal
+        isOpen={isReceiptModalOpen}
+        onClose={() => setIsReceiptModalOpen(false)}
+        {...receiptModalProps}
+      />
     </motion.div>
   );
 }

@@ -15,6 +15,7 @@ export interface Patient {
   lastVisit?: string;
   createdAt: string;
   observations?: string;
+  address?: string;
   profilePicture?: string;
 }
 
@@ -188,6 +189,33 @@ export interface MedicalRecord {
   updatedAt?: string;
 }
 
+export interface ReceiptData {
+  id?: string;
+  number: string;
+  patientId: string;
+  patientName: string;
+  patientCpf?: string;
+  patientPhone?: string;
+  patientAddress?: string;
+  amount: number;
+  amountInWords?: string;
+  paymentMethod: string;
+  date: string;
+  description: string;
+  observations?: string;
+  appointmentId?: string;
+  financialTransactionId?: string;
+  professionalName?: string;
+  professionalCpf?: string;
+  professionalRegistro?: string;
+  professionalSignature?: string;
+  clinicName?: string;
+  clinicRazaoSocial?: string;
+  clinicCnpj?: string;
+  clinicPhone?: string;
+  clinicAddress?: string;
+}
+
 export interface Document {
   id: string;
   patientId: string;
@@ -201,6 +229,7 @@ export interface Document {
   fiscalDocumentNumber?: string;
   amount?: number;
   category?: string;
+  receiptData?: ReceiptData;
 }
 
 export interface AIInsightTask {

@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useStore } from '../store';
+import { supabase } from '../lib/supabase';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Card } from '../components/ui/card';
 import { toast } from 'sonner';
 import { 
-  ShieldCheck, 
+  ShieldCheck,
+  AlertCircle, 
   KeyRound, 
   User, 
   Eye, 
@@ -14,7 +16,8 @@ import {
   UserPlus,
   Phone,
   Sparkles,
-  CheckCircle2
+  CheckCircle2,
+  Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -22,6 +25,8 @@ export function Login() {
   const loginClient = useStore(state => state.loginClient);
   const registerClient = useStore(state => state.registerClient);
   const requestPasswordReset = useStore(state => state.requestPasswordReset);
+  const checkPasswordResetStatus = useStore(state => state.checkPasswordResetStatus);
+  const acknowledgePasswordReset = useStore(state => state.acknowledgePasswordReset);
   
   const [isRegister, setIsRegister] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -31,7 +36,7 @@ export function Login() {
   const [recoveryUsername, setRecoveryUsername] = useState('');
   const [recoveryPreference, setRecoveryPreference] = useState('');
   const [requestingRecovery, setRequestingRecovery] = useState(false);
-  
+
   const [formData, setFormData] = useState({
     name: '',
     username: '',
@@ -39,6 +44,21 @@ export function Login() {
     confirmPassword: '',
     phone: ''
   });
+
+  const [userResetStatus, setUserResetStatus] = useState<{ status: 'pending' | 'completed'; requestId?: string; message: string; createdAt?: string; resolvedAt?: string } | null>(null);
+  const [loginErrorMessage, setLoginErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!formData.username || formData.username.trim().length < 2) {
+      setUserResetStatus(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const res = await checkPasswordResetStatus(formData.username);
+      setUserResetStatus(res);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [formData.username, checkPasswordResetStatus]);
 
   const formatPhoneNumber = (value: string) => {
     // Remove tudo que não é dígito
@@ -101,11 +121,28 @@ export function Login() {
           toast.error('Falha ao criar o cadastro. Tente outro nome de usuário.');
         }
       } else {
+        setLoginErrorMessage(null);
         const success = await loginClient(formData.username, formData.password);
         if (success) {
+          if (userResetStatus?.status === 'completed') {
+            await acknowledgePasswordReset(formData.username, userResetStatus.requestId);
+          }
           toast.success('Acesso concedido! Bem-vindo de volta.');
         } else {
-          toast.error('Usuário ou senha incorretos.');
+          const normalizedUser = formData.username.trim().toLowerCase().replace(/^@/, '');
+          const { data: userExistsInClinica } = await supabase.from('clientes_clinica').select('id').eq('username', normalizedUser).maybeSingle();
+          const { data: userExistsInProf } = await supabase.from('profissionais_clinica').select('id').eq('username', normalizedUser).maybeSingle();
+
+          if (!userExistsInClinica && !userExistsInProf) {
+            const msg = `Você errou o usuário. Nenhuma conta encontrada com o login @${formData.username}.`;
+            toast.error(msg);
+            setLoginErrorMessage(`Você errou o usuário! Verifique o nome de usuário digitado.`);
+          } else {
+            const msg = `Você errou a senha. A senha digitada está incorreta para o usuário @${formData.username}.`;
+            toast.error(msg);
+            setLoginErrorMessage(`Você errou a senha! Verifique os caracteres e tente novamente.`);
+          }
+          setTimeout(() => setLoginErrorMessage(null), 2500);
         }
       }
     } catch (err: any) {
@@ -230,6 +267,35 @@ export function Login() {
                   </div>
                 </div>
 
+                {/* Password Reset Status Indicator Card */}
+                {userResetStatus && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -6 }} 
+                    animate={{ opacity: 1, y: 0 }} 
+                    className={`p-4 rounded-2xl border text-xs flex items-start gap-3 shadow-lg ${
+                      userResetStatus.status === 'pending'
+                        ? 'bg-amber-500/15 border-amber-500/30 text-amber-200'
+                        : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200'
+                    }`}
+                  >
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                      userResetStatus.status === 'pending' ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'
+                    }`}>
+                      {userResetStatus.status === 'pending' ? <Clock className="w-4 h-4 animate-pulse" /> : <CheckCircle2 className="w-4 h-4" />}
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-extrabold text-sm tracking-tight">
+                        {userResetStatus.status === 'pending' ? 'Aguardando Redefinição de Senha' : 'Senha Redefinida com Sucesso!'}
+                      </p>
+                      <p className="opacity-90 leading-relaxed">
+                        {userResetStatus.status === 'pending'
+                          ? `Sua solicitação de nova senha para @${formData.username} foi recebida e está em análise pelo Contaju.`
+                          : `A senha da conta @${formData.username} foi redefinida com sucesso pelo Contaju. Insira sua nova senha para entrar.`}
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+
                 {/* Phone Field (Register only) */}
                 <AnimatePresence initial={false}>
                   {isRegister && (
@@ -309,6 +375,23 @@ export function Login() {
                 </AnimatePresence>
 
               </div>
+
+              {/* Login Error Notification Banner */}
+              {loginErrorMessage && !isRegister && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -4 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  className="p-4 rounded-2xl bg-red-500/20 border border-red-500/40 text-red-200 text-xs flex items-center gap-3 shadow-lg"
+                >
+                  <div className="w-8 h-8 rounded-xl bg-red-500/30 text-red-300 flex items-center justify-center shrink-0">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="font-extrabold text-red-300 text-sm">{loginErrorMessage}</p>
+                    <p className="text-red-200/80 text-[11px]">Confira os dados acima ou utilize "Esqueci minha senha" para suporte.</p>
+                  </div>
+                </motion.div>
+              )}
 
               {/* Submit Button */}
               <button 
